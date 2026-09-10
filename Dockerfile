@@ -1,4 +1,17 @@
-# ── Stage 1: builder ──────────────────────────────────────────────────────────
+# ── Stage 1: web ──────────────────────────────────────────────────────────────
+FROM node:24.13.0-slim AS web
+
+WORKDIR /build/web
+
+# Install the locked dependencies first so the layer survives source edits
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+# Type-check and build; vite writes ../app/static, i.e. /build/app/static
+COPY web/ ./
+RUN npm run build
+
+# ── Stage 2: builder ──────────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 
 WORKDIR /build
@@ -11,7 +24,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project --python python3.12 \
     --link-mode=copy
 
-# ── Stage 2: runtime ──────────────────────────────────────────────────────────
+# ── Stage 3: runtime ──────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
 
 # git is needed to shallow-clone the repositories being indexed
@@ -26,6 +39,9 @@ COPY --from=builder /build/.venv /opt/venv
 
 # Copy application source
 COPY app/ app/
+
+# Copy the page built by the web stage (app/static is kept out of the build context)
+COPY --from=web /build/app/static app/static
 
 # Non-root user
 RUN adduser --disabled-password --no-create-home appuser \
