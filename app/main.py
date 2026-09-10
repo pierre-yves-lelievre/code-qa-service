@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api import router
 from app.config import settings
+from app.db import check_database
 from app.errors import (
     ServiceError,
     service_error_handler,
@@ -21,10 +22,12 @@ from app.logging_setup import configure_logging, get_logger
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Configure logging, create the data directory, and record the startup timestamp."""
+    """Configure logging, require a reachable database, create the data directory."""
     configure_logging(settings.log_level)
     log = get_logger(__name__)
     app.state.started_at = datetime.now(UTC)
+    if not check_database().reachable:
+        raise RuntimeError("Database unreachable at DATABASE_URL; start it with `make db`.")
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     log.info(
         "service_started",

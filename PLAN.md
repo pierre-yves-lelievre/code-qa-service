@@ -377,6 +377,8 @@ from `{detail, code}`.
 - README limitations to state plainly: the validity check cannot catch a real source cited for a
   claim it does not support (needs a judge); follow-ups depend on the planner rewrite; TypeScript
   call graphs are not modelled.
+- TODO (README quick start, author): Docker must be running to commit — the gitleaks
+  pre-commit hook runs the pinned `zricethezav/gitleaks` image.
 
 **Commits**
 1. `docs: README, architecture, decisions, security, next steps`
