@@ -1,4 +1,4 @@
-"""The index job: clone, walk, parse or window per file, batched inserts, activate, sweep."""
+"""The index job: clone, walk, parse or window per file, batched inserts, embed, activate, sweep."""
 
 import shutil
 import time
@@ -7,7 +7,8 @@ from typing import Any
 
 from app.chunking import Chunk, chunk_file, window_file
 from app.config import settings
-from app.errors import IndexTimeoutError, ServiceError
+from app.embeddings import FakeEmbeddings, VoyageEmbeddings, token_batches
+from app.errors import EmbedBudgetExceededError, IndexTimeoutError, ServiceError
 from app.github import GitHubClient, RepoRef, WalkEntry, walk_files
 from app.jobs import JobStore
 from app.logging_setup import get_logger
@@ -30,6 +31,7 @@ def _run_index(
     jobs: JobStore,
     store: ChunkStore,
     github: GitHubClient,
+    embeddings: VoyageEmbeddings | FakeEmbeddings,
 ) -> None:
     """Index a repo at its branch head; any failure marks the job and snapshot failed."""
     started = time.monotonic()
@@ -41,6 +43,7 @@ def _run_index(
             job_id, status="running", started_at=datetime.now(UTC), progress={"stage": "cloning"}
         )
         log.info("index_started", job_id=job_id, repo_id=repo_id)
+        embeddings.check_key()
         _check_deadline(deadline)
         dest.parent.mkdir(parents=True, exist_ok=True)
         clone_timeout = min(settings.clone_timeout_s, deadline - time.monotonic())
@@ -81,6 +84,7 @@ def _run_index(
                     },
                 )
 
+        stats["embedding"] = _embed(job_id, snapshot_id, embeddings, jobs, store, deadline)
         _check_deadline(deadline)
         stats["seconds"] = round(time.monotonic() - started, 2)
         store.activate(snapshot_id, stats)
@@ -98,6 +102,9 @@ def _run_index(
             snapshot_id=snapshot_id,
             files=stats["files"],
             chunks=stats["chunks"],
+            embedded=stats["embedding"]["embedded"],
+            tokens=stats["embedding"]["tokens"],
+            cost_usd=stats["embedding"]["cost_usd"],
             seconds=stats["seconds"],
             swept=swept,
         )
@@ -125,6 +132,65 @@ def _fail(
         jobs.update(job_id, status="failed", error=message, completed_at=datetime.now(UTC))
     except Exception as inner:
         log.error("index_failure_not_recorded", job_id=job_id, error_type=type(inner).__name__)
+
+
+# ── Embeddings ────────────────────────────────────────────────────────────────
+
+
+def _embed(
+    job_id: str,
+    snapshot_id: int,
+    embeddings: VoyageEmbeddings | FakeEmbeddings,
+    jobs: JobStore,
+    store: ChunkStore,
+    deadline: float,
+) -> dict[str, Any]:
+    """Embed the snapshot's hashes with no vector for this model, committing per batch.
+
+    The estimate is checked against the per-job cap before any request, and the actual usage
+    after each batch; batches already committed are kept either way.
+    """
+    budget = settings.max_embed_tokens_per_job
+    pending, reused = store.pending_embeddings(snapshot_id, embeddings.model)
+    estimated = sum(tokens for _, tokens in pending)
+    if estimated > budget:
+        raise EmbedBudgetExceededError(
+            f"This repository needs about {estimated:,} tokens to embed, "
+            f"over the per-job limit of {budget:,}."
+        )
+    used = done = 0
+    ranges = token_batches(
+        [tokens for _, tokens in pending], embeddings.batch_tokens, embeddings.batch_items
+    )
+    for batch in ranges:
+        _check_deadline(deadline)
+        hashes = [pending[i][0] for i in batch]
+        texts = store.chunk_texts(snapshot_id, hashes)
+        embedded = embeddings.embed_documents([texts[h] for h in hashes])
+        store.add_embeddings(embeddings.model, list(zip(hashes, embedded.vectors, strict=True)))
+        used += embedded.tokens
+        done += len(hashes)
+        jobs.update(
+            job_id,
+            progress={
+                "stage": "embedding",
+                "chunks_done": done,
+                "chunks_total": len(pending),
+                "tokens": used,
+            },
+        )
+        if used > budget:
+            raise EmbedBudgetExceededError(
+                f"Embedding used {used:,} tokens, over the per-job limit of {budget:,}."
+            )
+    return {
+        "model": embeddings.model,
+        "embedded": done,
+        "reused": reused,
+        "tokens_estimated": estimated,
+        "tokens": used,
+        "cost_usd": round(used * embeddings.usd_per_mtok / 1_000_000, 6),
+    }
 
 
 # ── Files ─────────────────────────────────────────────────────────────────────

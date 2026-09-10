@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from app.api import router
 from app.config import settings
 from app.db import check_database, close_pool, get_pool, run_migrations
+from app.embeddings import FakeEmbeddings, VoyageEmbeddings
 from app.errors import (
     ServiceError,
     service_error_handler,
@@ -36,6 +37,14 @@ async def lifespan(app: FastAPI):
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     token = settings.github_token.get_secret_value() if settings.github_token else None
     app.state.github = GitHubClient(token)
+    if settings.providers == "real" and settings.voyage_api_key is not None:
+        app.state.embeddings = VoyageEmbeddings(
+            settings.voyage_api_key.get_secret_value(),
+            settings.embedding_model,
+            settings.embedding_dims,
+        )
+    else:
+        app.state.embeddings = FakeEmbeddings(settings.embedding_dims)
     log.info(
         "service_started",
         version=settings.app_version,
@@ -45,6 +54,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        app.state.embeddings.close()
         app.state.github.close()
         close_pool()
         log.info("service_stopped")

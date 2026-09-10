@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.db import check_database
+from app.embeddings import FakeEmbeddings, VoyageEmbeddings
 from app.errors import (
     GitHubRateLimitedError,
     GitHubRepoNotFoundError,
@@ -77,6 +78,11 @@ def _errors(*errors: type[ServiceError]) -> dict[int | str, dict[str, Any]]:
 def get_github(request: Request) -> GitHubClient:
     """The app's GitHubClient, built in the lifespan; tests override it."""
     return request.app.state.github
+
+
+def get_embeddings(request: Request) -> VoyageEmbeddings | FakeEmbeddings:
+    """The app's embeddings client, built in the lifespan from PROVIDERS; tests override it."""
+    return request.app.state.embeddings
 
 
 def get_jobs() -> JobStore:
@@ -158,9 +164,10 @@ def search_repos(
     summary="Index a public GitHub repository",
     description=(
         "Validates the URL, checks the repository on the GitHub API (exists, public, under "
-        "the size limit), then starts a background job that shallow-clones, parses and chunks "
-        "it. Returns 202 with the job id; poll GET /index/{job_id}. One active job per "
-        "repository and a global cap on active jobs are enforced here."
+        "the size limit), then starts a background job that shallow-clones, parses, chunks "
+        "and embeds it; only content without a vector for the current model is embedded, "
+        "under the per-job token cap. Returns 202 with the job id; poll GET /index/{job_id}. "
+        "One active job per repository and a global cap on active jobs are enforced here."
     ),
     responses=_errors(
         InvalidRepoUrlError,
@@ -178,6 +185,7 @@ def index_repo(
     github: Annotated[GitHubClient, Depends(get_github)],
     jobs: Annotated[JobStore, Depends(get_jobs)],
     store: Annotated[ChunkStore, Depends(get_store)],
+    embeddings: Annotated[VoyageEmbeddings | FakeEmbeddings, Depends(get_embeddings)],
 ) -> IndexAccepted:
     """Pre-check a repository, create its job, and run the index in the background."""
     requested = parse_repo_url(body.url)
@@ -187,7 +195,7 @@ def index_repo(
         info.owner, info.name, f"https://github.com/{info.owner}/{info.name}"
     )
     job = jobs.create(repo_id)
-    background.add_task(_run_index, job.id, repo_id, ref, jobs, store, github)
+    background.add_task(_run_index, job.id, repo_id, ref, jobs, store, github, embeddings)
     log.info("index_requested", job_id=job.id, repo_id=repo_id)
     return IndexAccepted(
         job_id=job.id,

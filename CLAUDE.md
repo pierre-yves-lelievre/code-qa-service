@@ -49,8 +49,8 @@ app/
 web/                  # Vite + React + Tailwind, built into app/static (never committed)
 evals/                # golden.json, run_evals.py
 tests/                # conftest.py, test_parsing.py, test_chunking.py, test_retrieval.py,
-                      # test_store.py, test_jobs.py, test_db.py, test_github.py, test_api.py,
-                      # fixtures/
+                      # test_store.py, test_jobs.py, test_db.py, test_github.py,
+                      # test_embeddings.py, test_api.py, fixtures/
 ```
 
 ## Style rules

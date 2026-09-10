@@ -221,6 +221,24 @@ def test_index_fixture_repo_end_to_end_activates_a_snapshot(
     assert stats["files_with_parse_errors"] == 1  # shop/broken.py
     assert _rows("SELECT count(*) FROM files") == [(4,)]
     assert _rows("SELECT count(*) FROM chunks WHERE snapshot_id = %s", snapshot_id) == [(expected,)]
+    ((hashes, tokens),) = _rows(
+        "SELECT count(*), sum(tokens) FROM (SELECT DISTINCT content_hash, tokens FROM chunks"
+        " WHERE snapshot_id = %s) c",
+        snapshot_id,
+    )
+    assert stats["embedding"] == {
+        "model": "fake",
+        "embedded": hashes,
+        "reused": 0,
+        "tokens_estimated": tokens,
+        "tokens": tokens,  # the fake reports the estimate as its usage
+        "cost_usd": 0.0,
+    }
+    assert _rows(
+        "SELECT count(*) FROM chunks c WHERE c.snapshot_id = %s AND NOT EXISTS"
+        " (SELECT 1 FROM embeddings e WHERE e.content_hash = c.content_hash AND e.model = 'fake')",
+        snapshot_id,
+    ) == [(0,)]
     assert not any((settings.data_dir / "clones").iterdir())  # the clone is removed
 
 

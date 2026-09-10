@@ -29,10 +29,12 @@ import httpx  # noqa: E402
 import psycopg  # noqa: E402
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from pgvector.psycopg import register_vector  # noqa: E402
 
-from app.api import get_github  # noqa: E402
+from app.api import get_embeddings, get_github  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.db import run_migrations  # noqa: E402
+from app.embeddings import FakeEmbeddings, VoyageEmbeddings  # noqa: E402
 from app.github import GitHubClient  # noqa: E402
 from app.jobs import JobStore  # noqa: E402
 from app.main import app  # noqa: E402
@@ -99,6 +101,7 @@ def migrated() -> None:
 def db(migrated: None) -> Iterator[psycopg.Connection]:
     """A connection inside one transaction that is rolled back when the test ends."""
     with psycopg.connect(settings.database_url, autocommit=True) as conn:
+        register_vector(conn)
         with conn.transaction(force_rollback=True):
             yield conn
 
@@ -154,9 +157,9 @@ def committed(migrated: None) -> Iterator[None]:
     """For tests whose work commits (routes, the index job): empty every repo before and after."""
 
     def _truncate() -> None:
-        """Remove all repos and, by cascade, their snapshots, files, chunks and jobs."""
+        """Remove all repos (cascading to snapshots, files, chunks, jobs) and all embeddings."""
         with psycopg.connect(settings.database_url, autocommit=True) as conn:
-            conn.execute("TRUNCATE repos RESTART IDENTITY CASCADE")
+            conn.execute("TRUNCATE repos, embeddings RESTART IDENTITY CASCADE")
 
     _truncate()
     yield
@@ -177,3 +180,16 @@ def mock_github() -> Iterator[Callable[..., GitHubClient]]:
 
     yield _use
     app.dependency_overrides.pop(get_github, None)
+
+
+@pytest.fixture
+def mock_embeddings() -> Iterator[Callable[..., VoyageEmbeddings | FakeEmbeddings]]:
+    """Setter installing an embeddings client as the app's dependency."""
+
+    def _use(embeddings: VoyageEmbeddings | FakeEmbeddings) -> VoyageEmbeddings | FakeEmbeddings:
+        """Route the index job's embedding calls to `embeddings`."""
+        app.dependency_overrides[get_embeddings] = lambda: embeddings
+        return embeddings
+
+    yield _use
+    app.dependency_overrides.pop(get_embeddings, None)

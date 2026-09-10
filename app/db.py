@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import psycopg
+from pgvector.psycopg import register_vector
 from psycopg_pool import ConnectionPool
 
 from app.config import settings
@@ -52,6 +53,12 @@ def check_database() -> DatabaseStatus:
 # ── Pool ──────────────────────────────────────────────────────────────────────
 
 
+def _configure(conn: psycopg.Connection) -> None:
+    """Teach a new pooled connection the pgvector type, leaving it idle for the pool."""
+    register_vector(conn)
+    conn.commit()
+
+
 def get_pool() -> ConnectionPool:
     """Return the process-wide pool, creating and opening it on first use."""
     global _pool
@@ -62,6 +69,7 @@ def get_pool() -> ConnectionPool:
             max_size=POOL_MAX_SIZE,
             timeout=5,
             kwargs={"connect_timeout": 2},
+            configure=_configure,
             name="codeqa",
             open=True,
         )

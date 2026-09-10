@@ -1,4 +1,4 @@
-"""ChunkStore: repo upsert, snapshots, per-batch file and chunk inserts, activation, sweep."""
+"""ChunkStore: repo upsert, snapshots, per-batch files, chunks and embeddings, activation, sweep."""
 
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import psycopg
+from pgvector import Vector
 from psycopg.rows import class_row
 from psycopg.types.json import Jsonb
 
@@ -125,6 +126,39 @@ class ChunkStore:
                         )
                 count += len(chunks)
         return count
+
+    def pending_embeddings(self, snapshot_id: int, model: str) -> tuple[list[tuple[str, int]], int]:
+        """Distinct hashes lacking a `model` vector, with tokens; and how many already have one."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT ON (c.content_hash) c.content_hash, c.tokens,"
+                " EXISTS (SELECT 1 FROM embeddings e"
+                "  WHERE e.content_hash = c.content_hash AND e.model = %s)"
+                " FROM chunks c WHERE c.snapshot_id = %s ORDER BY c.content_hash",
+                (model, snapshot_id),
+            ).fetchall()
+        pending = [(content_hash, tokens) for content_hash, tokens, done in rows if not done]
+        return pending, len(rows) - len(pending)
+
+    def chunk_texts(self, snapshot_id: int, hashes: list[str]) -> dict[str, str]:
+        """The text for each content hash in a snapshot, fetched one embed batch at a time."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT ON (content_hash) content_hash, text FROM chunks"
+                " WHERE snapshot_id = %s AND content_hash = ANY(%s)",
+                (snapshot_id, hashes),
+            ).fetchall()
+        return dict(rows)
+
+    def add_embeddings(self, model: str, rows: list[tuple[str, list[float]]]) -> int:
+        """Store one batch of vectors in one transaction; an existing (hash, model) is kept."""
+        with self._connect() as conn, conn.transaction(), conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO embeddings (content_hash, model, embedding) VALUES (%s, %s, %s)"
+                " ON CONFLICT (content_hash, model) DO NOTHING",
+                [(content_hash, model, Vector(vector)) for content_hash, vector in rows],
+            )
+        return len(rows)
 
     def activate(self, snapshot_id: int, stats: dict[str, Any]) -> None:
         """Retire the repo's active snapshot and activate this one, in one transaction."""

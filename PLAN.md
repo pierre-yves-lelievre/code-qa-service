@@ -228,7 +228,8 @@ snapshot; failed job leaves the previous snapshot active; re-index at same sha s
   sha → walk → parse/window.
   - So a same-sha run leaves no empty snapshot row.
   - `embed` (Phase 5) and `summary` (Phase 7) slot in before activation, together with their
-    `_run_index` parameters. Until then, the lifecycle test runs without an embed step.
+    `_run_index` parameters. Phase 5 added `embed`; the lifecycle test asserts every hash has a
+    vector.
 - *Timeouts*: `github_timeout_s=10`, `clone_timeout_s=120`, `job_timeout_s=1800`.
   - The job timeout is cooperative: it is checked between stages and before each file, and the
     clone's subprocess timeout is capped at the time remaining.
@@ -275,6 +276,42 @@ Index step embeds only hashes without a row for the current model; commits per b
 first batch, the job sums the tokens to embed and aborts with `EmbedBudgetExceededError` if the
 total exceeds `max_embed_tokens_per_job`. `FakeEmbeddings` is selected when `providers="fake"`.
 
+**Decisions** (agreed in the Phase 5 plan):
+- *Fake model key*: `FakeEmbeddings.model = "fake"`, so its vectors are stored as `(hash, "fake")`
+  and never pass for `voyage-code-4` rows after switching to `PROVIDERS=real`.
+- *Request*:
+  - `input_type` is `document` or `query`, `output_dimension = embedding_dims`, and
+    `truncation: false`. Chunks are capped far below the 32K context, so an oversize input fails
+    loudly instead of being cut silently.
+  - The response is checked for count, `index` order and dims.
+- *Batch limits*: 100K estimated tokens and 1,000 inputs per request.
+  - Voyage documents 120K tokens for its code and large models but doesn't list voyage-code-4,
+    so the lowest documented limit is assumed. `estimate_tokens` runs high.
+  - The pure `token_batches` slices the batches in the job, so the deadline check and the commit
+    happen per batch. `embed_documents` makes exactly one request and refuses an oversize batch.
+- *Retries*:
+  - 429, 500, 502, 503 and 504, timeouts and transport errors are retried. There are at most 5
+    attempts, with backoff of 1, 2, 4 and 8 s plus up to 0.5 s of jitter, capped at 30 s. A
+    numeric `Retry-After` is honored.
+  - 400, 401 and 403 fail at once, and 401/403 read "Voyage rejected the API key."
+- *Key check*: `check_key()` embeds `"ping"` once, right after the job is marked running and
+  before the clone. A bad key therefore leaves no clone and no snapshot.
+- *Budget*:
+  - The estimate, the sum of `chunks.tokens` over the distinct pending hashes, is checked before
+    any request.
+  - The cumulative actual `usage.total_tokens` is checked after each batch.
+  - Either one over `max_embed_tokens_per_job` raises `EmbedBudgetExceededError` (413,
+    `embed_budget_exceeded`), which is recorded on the job.
+  - Committed batches are kept, keyed by content, so the next run reuses them.
+- *Stats*: `snapshots.stats.embedding` is `{model, embedded, reused, tokens_estimated, tokens,
+  cost_usd}`.
+  - `cost_usd` uses `embed_usd_per_mtok = 0.12`, the voyage-code-4 list price on 2026-09-10. The
+    first 200M tokens are free, which is not modeled. The fake prices at 0.
+  - `index_succeeded` logs `embedded`, `tokens` and `cost_usd`.
+- *Settings*: `embed_timeout_s = 30` and `embed_usd_per_mtok = 0.12`.
+- *Not swept*: `embeddings` has no FK to snapshots, so vectors for swept content remain. Pruning
+  them is a next step.
+
 **Tests**: batching respects the token budget (fake); key check failure fails fast; rerun embeds
 nothing when nothing changed.
 
@@ -315,6 +352,10 @@ setter; accepted); keep the top 12 as full hits and the next 30 (60 when
 
 **Relevance floor**: if the symbol and full-text legs returned nothing and the best cosine score is
 below `settings.relevance_floor`, the result is `no_relevant_sources=True`.
+
+**Fake vectors**: `FakeEmbeddings` vectors are hash-seeded noise with no meaning. Vector-leg tests
+therefore assert the mechanics, not the semantics: a chunk's exact text used as the query returns
+that chunk first. Semantic quality is measured only by `make eval` with real keys.
 
 **Tests**: planner rewrites a follow-up into a standalone query (`FakeLLM`); planner failure falls
 back to the raw question; identifiers resolved by membership, not pattern; RRF ordering on
