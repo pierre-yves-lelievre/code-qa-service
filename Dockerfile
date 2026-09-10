@@ -1,5 +1,5 @@
 # ── Stage 1: web ──────────────────────────────────────────────────────────────
-FROM node:24.13.0-slim AS web
+FROM node:26.8-slim AS web
 
 WORKDIR /build/web
 
