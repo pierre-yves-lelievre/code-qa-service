@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, errorText, type IndexAccepted, type RepoResponse } from "./api";
+import Chat from "./components/Chat";
 import IndexProgress from "./components/IndexProgress";
 import RepoSearch from "./components/RepoSearch";
 
@@ -14,7 +15,7 @@ function setRepoInUrl(repoId: number | null): void {
   window.history.replaceState(null, "", repoId === null ? window.location.pathname : `?repo=${repoId}`);
 }
 
-/** The page: search and index a repository, then its summary; `?repo=` survives a reload. */
+/** The page: search and index a repository, then its summary and the chat; `?repo=` survives a reload. */
 export default function App() {
   const [repoId, setRepoId] = useState(repoFromUrl);
   const [repo, setRepo] = useState<RepoResponse | null>(null);
@@ -93,18 +94,21 @@ export default function App() {
         {loading ? (
           <p className="text-sm text-slate-500">Loading…</p>
         ) : repo || job ? (
-          <IndexProgress
-            job={job}
-            repo={repo}
-            alreadyIndexed={alreadyIndexed}
-            onSucceeded={(already) => {
-              if (!job) return;
-              setAlreadyIndexed(already);
-              setRepoInUrl(job.repo_id);
-              setRepoId(job.repo_id);
-            }}
-            onBack={() => setJob(null)}
-          />
+          <>
+            <IndexProgress
+              job={job}
+              repo={repo}
+              alreadyIndexed={alreadyIndexed}
+              onSucceeded={(already) => {
+                if (!job) return;
+                setAlreadyIndexed(already);
+                setRepoInUrl(job.repo_id);
+                setRepoId(job.repo_id);
+              }}
+              onBack={() => setJob(null)}
+            />
+            {repo && <Chat key={repo.repo_id} repo={repo} />}
+          </>
         ) : (
           <RepoSearch
             onStarted={(accepted) => {
