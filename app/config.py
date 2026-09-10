@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     clone_timeout_s: float = 120.0
     job_timeout_s: float = 1800.0
     embed_timeout_s: float = 30.0
+    planner_timeout_s: float = 3.0
 
     # ── Retrieval ─────────────────────────────────────────────────────────────
     relevance_floor: float = 0.35

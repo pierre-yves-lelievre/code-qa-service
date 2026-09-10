@@ -40,6 +40,7 @@ app/
 ├── queries/          # python.scm, javascript.scm (shared by js/ts/tsx), typescript.scm (TS-only)
 ├── chunking.py       # rows -> chunks: symbol rules, windows, parts, content hash
 ├── embeddings.py     # VoyageEmbeddings, FakeEmbeddings; count_tokens, batching, backoff
+├── llm.py            # ClaudeLLM (thin SDK wrapper), FakeLLM; structured(), complete()
 ├── store.py          # ChunkStore: upserts, snapshot activate/sweep, 3 retrieval queries
 ├── planning.py       # one structured-output call: standalone query, identifiers, intent
 ├── retrieval.py      # split_identifiers(), rrf(), collapse_parts(), relevance floor — pure
@@ -50,7 +51,8 @@ web/                  # Vite + React + Tailwind, built into app/static (never co
 evals/                # golden.json, run_evals.py
 tests/                # conftest.py, test_parsing.py, test_chunking.py, test_retrieval.py,
                       # test_store.py, test_jobs.py, test_db.py, test_github.py,
-                      # test_embeddings.py, test_api.py, fixtures/
+                      # test_embeddings.py, test_llm.py, test_planning.py, test_api.py,
+                      # fixtures/
 ```
 
 ## Style rules
