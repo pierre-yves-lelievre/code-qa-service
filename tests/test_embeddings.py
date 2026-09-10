@@ -13,6 +13,7 @@ from app.embeddings import (
     VOYAGE_URL,
     FakeEmbeddings,
     VoyageEmbeddings,
+    token_batches,
 )
 from app.errors import ProviderError
 
@@ -212,3 +213,22 @@ def test_fake_vectors_are_deterministic_unit_norm_and_distinct():
     assert first.vectors[0] != first.vectors[1]
     assert fake.embed_query("alpha").vectors[0] == first.vectors[0]
     assert fake.model == "fake"
+
+
+# ── Batching ──────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("tokens", "max_items", "expected"),
+    [
+        ([], 5, []),
+        ([5, 5], 5, [range(0, 2)]),  # exact fit
+        ([6, 5], 5, [range(0, 1), range(1, 2)]),
+        ([3, 20, 3], 5, [range(0, 1), range(1, 2), range(2, 3)]),  # oversize goes alone
+        ([1, 1, 1, 1, 1], 2, [range(0, 2), range(2, 4), range(4, 5)]),  # item cap
+    ],
+)
+def test_token_batches_split_in_order_under_both_limits(
+    tokens: list[int], max_items: int, expected: list[range]
+):
+    assert token_batches(tokens, max_tokens=10, max_items=max_items) == expected

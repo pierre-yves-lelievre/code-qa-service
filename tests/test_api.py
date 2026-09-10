@@ -3,6 +3,7 @@
 import json
 import uuid
 from collections.abc import Callable
+from hashlib import sha256
 from pathlib import Path
 
 import httpx
@@ -11,9 +12,10 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.chunking import chunk_file
+from app.chunking import Chunk, chunk_file, estimate_tokens
 from app.config import Settings, settings
 from app.db import DatabaseStatus
+from app.embeddings import EMBED_BATCH_TOKENS, Embedded, FakeEmbeddings, VoyageEmbeddings
 from app.jobs import INTERRUPTED_MESSAGE, JobStore
 from app.main import app
 from app.parsing import file_symbols, language_for
@@ -51,13 +53,18 @@ def _index(client, mock_github, repo) -> dict:
     return client.get(f"/index/{r.json()['job_id']}").json()
 
 
-def _expected_chunks(name: str) -> int:
+def _fixture_chunks(name: str) -> list[Chunk]:
     """Chunks that parsing and chunking produce for every file of a fixture repo."""
-    root, total = FIXTURES / name, 0
+    root, chunks = FIXTURES / name, []
     for path in sorted(p for p in root.rglob("*") if p.is_file()):
         rel, text = path.relative_to(root).as_posix(), path.read_text()
-        total += len(chunk_file(rel, text, file_symbols(rel, text, language_for(rel)).rows))
-    return total
+        chunks += chunk_file(rel, text, file_symbols(rel, text, language_for(rel)).rows)
+    return chunks
+
+
+def _expected_chunks(name: str) -> int:
+    """How many chunks a fixture repo produces."""
+    return len(_fixture_chunks(name))
 
 
 def _expected_symbols(name: str) -> int:
@@ -323,6 +330,144 @@ def test_interrupted_job_is_failed_at_startup_and_the_repo_can_be_indexed_again(
         assert (job["status"], job["error"]) == ("failed", INTERRUPTED_MESSAGE)
         assert _rows("SELECT status FROM snapshots WHERE id = %s", building) == [("failed",)]
         assert _index(client, mock_github, fixture_repo("py_app"))["status"] == "succeeded"
+
+
+# ── Embeddings ────────────────────────────────────────────────────────────────
+
+
+class _RecordingFake(FakeEmbeddings):
+    """FakeEmbeddings that records every batch it is asked to embed."""
+
+    def __init__(self, batch_tokens: int = EMBED_BATCH_TOKENS, overbill: int = 1) -> None:
+        """Use the real vector size; optionally a smaller batch budget or inflated usage."""
+        super().__init__(settings.embedding_dims)
+        self.batch_tokens = batch_tokens
+        self.overbill = overbill
+        self.batches: list[list[str]] = []
+
+    def embed_documents(self, texts: list[str]) -> Embedded:
+        """Record the batch, then embed it, reporting `overbill` times the estimated usage."""
+        self.batches.append(list(texts))
+        embedded = super().embed_documents(texts)
+        return Embedded(embedded.vectors, embedded.tokens * self.overbill)
+
+    def embedded_hashes(self) -> list[str]:
+        """Content hashes of every text embedded so far, in order."""
+        return [sha256(text.encode()).hexdigest() for batch in self.batches for text in batch]
+
+
+def _hashes(snapshot_id: int) -> set[str]:
+    """Distinct committed chunk hashes of one snapshot."""
+    rows = _rows("SELECT DISTINCT content_hash FROM chunks WHERE snapshot_id = %s", snapshot_id)
+    return {content_hash for (content_hash,) in rows}
+
+
+def test_embedding_batches_respect_the_token_budget(
+    client, committed, mock_github, mock_embeddings, fixture_repo
+):
+    fake = mock_embeddings(_RecordingFake(batch_tokens=200))
+    job = _index(client, mock_github, fixture_repo("py_app"))
+    assert job["status"] == "succeeded"
+    assert len(fake.batches) > 1
+    for batch in fake.batches:
+        assert len(batch) == 1 or sum(map(estimate_tokens, batch)) <= 200  # oversize goes alone
+    embedded = fake.embedded_hashes()
+    assert sorted(embedded) == sorted(_hashes(job["snapshot_id"]))  # each hash exactly once
+
+
+def test_embedding_estimate_over_the_job_cap_fails_before_any_request(
+    client, committed, mock_github, mock_embeddings, fixture_repo, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr("app.config.settings.max_embed_tokens_per_job", 1)
+    fake = mock_embeddings(_RecordingFake())
+    job = _index(client, mock_github, fixture_repo("py_app"))
+    assert job["status"] == "failed"
+    assert job["error"].startswith("This repository needs about ")
+    assert fake.batches == []
+    assert _rows("SELECT status FROM snapshots") == [("failed",)]
+    assert _rows("SELECT count(*) FROM embeddings") == [(0,)]
+
+
+def test_actual_usage_over_the_job_cap_fails_and_keeps_committed_batches(
+    client, committed, mock_github, mock_embeddings, fixture_repo, monkeypatch: pytest.MonkeyPatch
+):
+    distinct = {c.content_hash: c.tokens for c in _fixture_chunks("py_app")}
+    # The estimate fits the cap exactly; the provider then bills ten times the estimate.
+    monkeypatch.setattr("app.config.settings.max_embed_tokens_per_job", sum(distinct.values()))
+    fake = mock_embeddings(_RecordingFake(batch_tokens=200, overbill=10))
+    job = _index(client, mock_github, fixture_repo("py_app"))
+    assert job["status"] == "failed"
+    assert job["error"].startswith("Embedding used ")
+    assert 0 < len(fake.embedded_hashes()) < len(distinct)
+    stored = _rows("SELECT content_hash FROM embeddings WHERE model = 'fake'")
+    assert {content_hash for (content_hash,) in stored} == set(fake.embedded_hashes())
+
+
+def test_rejected_embedding_key_fails_the_job_before_cloning(
+    client, committed, mock_github, mock_embeddings
+):
+    calls: list[int] = []
+
+    def _unauthorized(request: httpx.Request) -> httpx.Response:
+        """Voyage refusing the key."""
+        calls.append(1)
+        return httpx.Response(401)
+
+    mock_embeddings(
+        VoyageEmbeddings(
+            "test-key",
+            "voyage-code-4",
+            settings.embedding_dims,
+            transport=httpx.MockTransport(_unauthorized),
+            sleep=lambda seconds: None,
+        )
+    )
+    mock_github(_repo_api(), clone_base="file:///nowhere")  # a clone would fail as clone_failed
+    r = client.post("/index", json={"url": REPO_URL})
+    job = client.get(f"/index/{r.json()['job_id']}").json()
+    assert (job["status"], job["error"]) == ("failed", "Voyage rejected the API key.")
+    assert len(calls) == 1
+    assert _rows("SELECT count(*) FROM snapshots") == [(0,)]
+
+
+def test_reindex_of_unchanged_content_embeds_nothing(
+    client, committed, mock_github, mock_embeddings, fixture_repo
+):
+    fake = mock_embeddings(_RecordingFake())
+    repo = fixture_repo("py_app")
+    first = _index(client, mock_github, repo)
+    embedded = len(fake.embedded_hashes())
+    assert embedded == len(_hashes(first["snapshot_id"])) > 0
+    fake.batches.clear()
+
+    repo.commit("Empty commit.")  # a new sha over the same tree
+    second = _index(client, mock_github, repo)
+    assert second["status"] == "succeeded"
+    assert second["snapshot_id"] != first["snapshot_id"]
+    assert fake.batches == []
+    ((stats,),) = _rows(
+        "SELECT stats->'embedding' FROM snapshots WHERE id = %s", second["snapshot_id"]
+    )
+    assert (stats["embedded"], stats["reused"], stats["tokens"]) == (0, embedded, 0)
+
+    third = _index(client, mock_github, repo)  # the same sha short-circuits before embedding
+    assert third["progress"] == {"stage": "done", "already_indexed": True}
+    assert fake.batches == []
+
+
+def test_new_content_is_embedded_and_unchanged_content_reused(
+    client, committed, mock_github, mock_embeddings, fixture_repo
+):
+    fake = mock_embeddings(_RecordingFake())
+    repo = fixture_repo("py_app")
+    before = _hashes(_index(client, mock_github, repo)["snapshot_id"])
+    fake.batches.clear()
+
+    (repo.path / "shop" / "extra.py").write_text("def extra():\n    return 1\n")
+    repo.commit()
+    after = _hashes(_index(client, mock_github, repo)["snapshot_id"])
+    assert sorted(fake.embedded_hashes()) == sorted(after - before)
+    assert 0 < len(after - before) < len(after)
 
 
 # ── Error contract ────────────────────────────────────────────────────────────
