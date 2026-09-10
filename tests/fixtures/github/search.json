@@ -1,0 +1,81 @@
+{
+  "total_count": 450338,
+  "incomplete_results": false,
+  "items": [
+    {
+      "full_name": "fastapi/fastapi",
+      "name": "fastapi",
+      "description": "FastAPI framework, high performance, easy to learn, fast to code, ready for production",
+      "stargazers_count": 102231,
+      "language": "Python",
+      "size": 55416,
+      "default_branch": "master",
+      "html_url": "https://github.com/fastapi/fastapi",
+      "clone_url": "https://github.com/fastapi/fastapi.git",
+      "private": false,
+      "owner": {
+        "login": "fastapi"
+      }
+    },
+    {
+      "full_name": "fastapi/full-stack-fastapi-template",
+      "name": "full-stack-fastapi-template",
+      "description": "Full-stack web application template with FastAPI, React, SQLModel, PostgreSQL, Vite, Tailwind CSS, shadcn/ui, FastAPI Cloud, and Docker Compose.",
+      "stargazers_count": 45491,
+      "language": "TypeScript",
+      "size": 7041,
+      "default_branch": "master",
+      "html_url": "https://github.com/fastapi/full-stack-fastapi-template",
+      "clone_url": "https://github.com/fastapi/full-stack-fastapi-template.git",
+      "private": false,
+      "owner": {
+        "login": "fastapi"
+      }
+    },
+    {
+      "full_name": "zhanymkanov/fastapi-best-practices",
+      "name": "fastapi-best-practices",
+      "description": "FastAPI Best Practices and Conventions we used at our startup",
+      "stargazers_count": 18058,
+      "language": null,
+      "size": 1728,
+      "default_branch": "master",
+      "html_url": "https://github.com/zhanymkanov/fastapi-best-practices",
+      "clone_url": "https://github.com/zhanymkanov/fastapi-best-practices.git",
+      "private": false,
+      "owner": {
+        "login": "zhanymkanov"
+      }
+    },
+    {
+      "full_name": "tadata-org/fastapi_mcp",
+      "name": "fastapi_mcp",
+      "description": "Expose your FastAPI endpoints as Model Context Protocol (MCP) tools, with Auth!",
+      "stargazers_count": 12003,
+      "language": "Python",
+      "size": 423,
+      "default_branch": "main",
+      "html_url": "https://github.com/tadata-org/fastapi_mcp",
+      "clone_url": "https://github.com/tadata-org/fastapi_mcp.git",
+      "private": false,
+      "owner": {
+        "login": "tadata-org"
+      }
+    },
+    {
+      "full_name": "mjhea0/awesome-fastapi",
+      "name": "awesome-fastapi",
+      "description": "A curated list of awesome things related to FastAPI",
+      "stargazers_count": 11646,
+      "language": null,
+      "size": 294,
+      "default_branch": "main",
+      "html_url": "https://github.com/mjhea0/awesome-fastapi",
+      "clone_url": "https://github.com/mjhea0/awesome-fastapi.git",
+      "private": false,
+      "owner": {
+        "login": "mjhea0"
+      }
+    }
+  ]
+}

@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     max_running_jobs: int = 2
     max_embed_tokens_per_job: int = 5_000_000
 
+    # ── Timeouts (seconds) ────────────────────────────────────────────────────
+    github_timeout_s: float = 10.0
+    clone_timeout_s: float = 120.0
+    job_timeout_s: float = 1800.0
+
     # ── Retrieval ─────────────────────────────────────────────────────────────
     relevance_floor: float = 0.35
 

@@ -49,11 +49,35 @@ class RepoTooLargeError(ServiceError):
 
 
 class CloneFailedError(ServiceError):
-    """Raised when cloning the repository from GitHub fails."""
+    """Raised when the git clone of a repository fails or times out."""
 
     code = "clone_failed"
     status_code = 502
     default_message = "Cloning the repository failed."
+
+
+class GitHubRepoNotFoundError(ServiceError):
+    """Raised when GitHub reports the repository missing, or it is private."""
+
+    code = "github_repo_not_found"
+    status_code = 404
+    default_message = "Repository not found on GitHub, or it is private."
+
+
+class GitHubRateLimitedError(ServiceError):
+    """Raised when the GitHub API refuses a call with 403 or 429 (rate limit)."""
+
+    code = "github_rate_limited"
+    status_code = 429
+    default_message = "GitHub API rate limit reached; set GITHUB_TOKEN or try again later."
+
+
+class GitHubUnavailableError(ServiceError):
+    """Raised when the GitHub API times out, is unreachable, or answers with a server error."""
+
+    code = "github_unavailable"
+    status_code = 502
+    default_message = "GitHub is unavailable; try again later."
 
 
 class InvalidRepoUrlError(ServiceError):
