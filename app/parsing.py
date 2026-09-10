@@ -99,6 +99,7 @@ def _query(grammar: str) -> Query:
 
 def file_symbols(path: str, text: str, language: str) -> ParseResult:
     """Parse one file into its module row followed by one row per definition, in source order."""
+    text = text.replace("\r\n", "\n")  # CRLF must not leave '\r' in docs and signatures
     source = text.encode()
     root = Parser(_language(language)).parse(source).root_node
     module = module_qualname(path)
