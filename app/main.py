@@ -1,4 +1,4 @@
-"""Shared with surrogate-model-service; adapted: data_dir, catch-all 500, past-tense events."""
+"""Shared with surrogate-model-service; adapted: data_dir, catch-all 500, migrations and pool."""
 
 import uuid
 from contextlib import asynccontextmanager
@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api import router
 from app.config import settings
-from app.db import check_database
+from app.db import check_database, close_pool, get_pool, run_migrations
 from app.errors import (
     ServiceError,
     service_error_handler,
@@ -22,12 +22,14 @@ from app.logging_setup import configure_logging, get_logger
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Configure logging, require a reachable database, create the data directory."""
+    """Require a reachable database, apply migrations, open the pool, create the data dir."""
     configure_logging(settings.log_level)
     log = get_logger(__name__)
     app.state.started_at = datetime.now(UTC)
     if not check_database().reachable:
         raise RuntimeError("Database unreachable at DATABASE_URL; start it with `make db`.")
+    run_migrations()
+    get_pool()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     log.info(
         "service_started",
@@ -35,8 +37,11 @@ async def lifespan(app: FastAPI):
         providers=settings.providers,
         data_dir=str(settings.data_dir),
     )
-    yield
-    log.info("service_stopped")
+    try:
+        yield
+    finally:
+        close_pool()
+        log.info("service_stopped")
 
 
 app = FastAPI(title="Code Q&A Service", version=settings.app_version, lifespan=lifespan)
