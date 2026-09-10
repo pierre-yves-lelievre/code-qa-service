@@ -104,6 +104,14 @@ class IndexInProgressError(ServiceError):
     default_message = "An index job for this repository is already pending or running."
 
 
+class IndexTimeoutError(ServiceError):
+    """Raised inside an index job that runs past `job_timeout_s`; recorded on the job."""
+
+    code = "index_timeout"
+    status_code = 504
+    default_message = "The index job timed out."
+
+
 class ProviderError(ServiceError):
     """Raised when an embedding or LLM provider call fails."""
 

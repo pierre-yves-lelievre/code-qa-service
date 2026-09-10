@@ -17,12 +17,13 @@ from app.errors import (
     unhandled_error_handler,
     validation_error_handler,
 )
+from app.jobs import fail_interrupted
 from app.logging_setup import configure_logging, get_logger
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Require a reachable database, apply migrations, open the pool, create the data dir."""
+    """Require the database, migrate, open the pool, fail interrupted jobs, make data_dir."""
     configure_logging(settings.log_level)
     log = get_logger(__name__)
     app.state.started_at = datetime.now(UTC)
@@ -30,6 +31,7 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("Database unreachable at DATABASE_URL; start it with `make db`.")
     run_migrations()
     get_pool()
+    fail_interrupted()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     log.info(
         "service_started",

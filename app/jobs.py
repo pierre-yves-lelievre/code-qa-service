@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import psycopg
@@ -45,6 +45,28 @@ class Job:
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+
+
+INTERRUPTED_MESSAGE = "Interrupted by a service restart."
+
+
+def fail_interrupted(
+    connect: Callable[[], AbstractContextManager[psycopg.Connection]] = connection,
+) -> int:
+    """Fail jobs and building snapshots left by a previous process; return the job count.
+
+    Jobs run in-process, so at startup none can still be running. Assumes a single process.
+    """
+    with connect() as conn, conn.transaction():
+        conn.execute("UPDATE snapshots SET status = 'failed' WHERE status = 'building'")
+        count = conn.execute(
+            "UPDATE index_jobs SET status = 'failed', error = %s, completed_at = %s"
+            " WHERE status = ANY(%s)",
+            (INTERRUPTED_MESSAGE, datetime.now(UTC), ACTIVE_STATUSES),
+        ).rowcount
+    if count:
+        log.warning("jobs_interrupted", count=count)
+    return count
 
 
 def _is_uuid(job_id: str) -> bool:
