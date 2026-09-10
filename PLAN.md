@@ -526,7 +526,7 @@ entries `{question, expect: {path, qualname?} | null, proves}`:
 | 13 | Where is the Stripe integration? | `null` | relevance floor + not-found |
 
 Plus one two-turn case: Q7 followed by "what about its tests?" expecting
-`backend/app/tests/crud/test_user.py` — proves the planner rewrite.
+`backend/tests/crud/test_user.py` — proves the planner rewrite.
 
 Paths verified on the first index run; correct the file, not the code.
 
@@ -534,6 +534,40 @@ Paths verified on the first index run; correct the file, not the code.
 (pass `--reindex` to force; it prints the token estimate and cost first), ask each question, report hit@5 per entry and
 overall, plus median `total_ms` and cost per question from `queries`. Report only; no threshold
 in v0.
+
+**Decisions** (agreed in the Phase 8 plan):
+- *Pin*:
+  - The pin is `master` @ `cb740b656d7a0a6c5e12c7bf8e50343ec94ee9c7`. Every target path and
+    qualname was checked there via the GitHub API.
+  - The two-turn target was corrected to `backend/tests/crud/test_user.py`.
+- *What is paid for*:
+  - hit@5 is a retrieval metric. A case with a target runs `plan()` and `retrieve()` in-process
+    and is matched against the top 5 full hits:
+    - the path must be equal;
+    - with a qualname, the hit's qualname or name must equal it or end with `.` + qualname.
+  - A `null` case, and each turn before a conversation's last, goes through `ask()`.
+  - A full run is 14 planner calls, 14 query embeddings and 2 answers, about $0.10–0.15.
+  - hit@5 is out of 13: 12 entries plus the conversation's last turn.
+- *Index*:
+  - It is current when the active snapshot is at the pin **and** was embedded with the current
+    model. A fake-mode index stores its vectors under `fake`, which doesn't count.
+  - A current snapshot is re-indexed only with `--reindex`. Otherwise the runner indexes, and
+    prints an upper-bound estimate from GitHub's `size_kb` first.
+  - `_run_index(force=True)` bypasses the same-commit short-circuit. It is used for `--reindex`,
+    or when the snapshot at the pin has another model.
+  - When the branch has moved past the pin, the runner stops and names both commits.
+  - A target missing from the index is reported as `absent`: correct the file, not the code.
+- *Measuring*:
+  - Asked turns use the request id `eval-<run>-<case>-<turn>` and are read back from `queries`.
+  - Retrieval cases are timed in-process.
+  - Cost uses the four new `llm_usd_per_mtok_*` settings (Sonnet 5 list price on 2026-09-10) and
+    `embed_usd_per_mtok`.
+  - The report also gives the all-time medians over the repo's answered `queries`, which are the
+    README numbers.
+- *Wiring*:
+  - `app.main.build_clients()` is shared by the lifespan and the runner.
+  - The command is `python -m evals.run_evals`, or `make eval ARGS=--reindex`.
+  - Exit code 0 means the report printed; 2 means the eval could not start.
 
 **Commits**
 1. `feat: golden set and eval runner with hit@5 and cost summary`

@@ -36,8 +36,12 @@ def _run_index(
     github: GitHubClient,
     embeddings: VoyageEmbeddings | FakeEmbeddings,
     llm: ClaudeLLM | FakeLLM,
+    force: bool = False,
 ) -> None:
-    """Index a repo at its branch head; any failure marks the job and snapshot failed."""
+    """Index a repo at its branch head; `force` rebuilds even when that commit is active.
+
+    Any failure marks the job and snapshot failed.
+    """
     started = time.monotonic()
     deadline = started + settings.job_timeout_s
     dest = settings.data_dir / "clones" / job_id
@@ -54,7 +58,7 @@ def _run_index(
         sha = github.shallow_clone(ref, dest, timeout=clone_timeout)
 
         active = store.active_snapshot(repo_id)
-        if active is not None and active.commit_sha == sha:
+        if not force and active is not None and active.commit_sha == sha:
             jobs.update(
                 job_id,
                 status="succeeded",

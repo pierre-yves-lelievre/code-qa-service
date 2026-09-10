@@ -18,6 +18,8 @@ from app.config import Settings, settings
 from app.db import DatabaseStatus
 from app.embeddings import EMBED_BATCH_TOKENS, Embedded, FakeEmbeddings, VoyageEmbeddings
 from app.errors import ProviderError
+from app.github import GitHubClient, RepoRef
+from app.indexing import _run_index
 from app.jobs import INTERRUPTED_MESSAGE, JobStore
 from app.llm import Citation, Completion, FakeLLM, Usage
 from app.main import app
@@ -317,6 +319,34 @@ def test_reindex_at_the_same_commit_short_circuits(client, committed, mock_githu
     assert again["progress"] == {"stage": "done", "already_indexed": True}
     assert again["snapshot_id"] == first["snapshot_id"]
     assert _rows("SELECT count(*) FROM snapshots") == [(1,)]
+
+
+def test_forced_index_at_the_same_commit_builds_and_activates_a_new_snapshot(
+    client, committed, mock_github, fixture_repo
+):
+    repo = fixture_repo("py_app")
+    first = _index(client, mock_github, repo)
+    github = GitHubClient(transport=httpx.MockTransport(_repo_api()), clone_base=repo.clone_base)
+    jobs = JobStore()
+    job = jobs.create(first["repo_id"])
+    _run_index(
+        job.id,
+        first["repo_id"],
+        RepoRef("octo", "py_app", "main"),
+        jobs,
+        ChunkStore(),
+        github,
+        FakeEmbeddings(settings.embedding_dims),
+        FakeLLM(),
+        force=True,
+    )
+    forced = jobs.get(job.id)
+    assert forced.status == "succeeded"
+    assert "already_indexed" not in forced.progress
+    statuses = dict(_rows("SELECT id, status FROM snapshots"))
+    assert statuses == {first["snapshot_id"]: "retired", forced.snapshot_id: "active"}
+    shas = _rows("SELECT commit_sha FROM snapshots WHERE id = %s", forced.snapshot_id)
+    assert shas == [(repo.head(),)]
 
 
 def test_job_past_its_timeout_is_failed(

@@ -23,6 +23,29 @@ from app.jobs import fail_interrupted
 from app.llm import ClaudeLLM, FakeLLM
 from app.logging_setup import configure_logging, get_logger
 
+DATABASE_UNREACHABLE = "Database unreachable at DATABASE_URL; start it with `make db`."
+
+
+def build_clients() -> tuple[GitHubClient, VoyageEmbeddings | FakeEmbeddings, ClaudeLLM | FakeLLM]:
+    """The GitHub, embeddings and LLM clients for the configured providers."""
+    token = settings.github_token.get_secret_value() if settings.github_token else None
+    github = GitHubClient(token)
+    embeddings: VoyageEmbeddings | FakeEmbeddings
+    if settings.providers == "real" and settings.voyage_api_key is not None:
+        embeddings = VoyageEmbeddings(
+            settings.voyage_api_key.get_secret_value(),
+            settings.embedding_model,
+            settings.embedding_dims,
+        )
+    else:
+        embeddings = FakeEmbeddings(settings.embedding_dims)
+    llm: ClaudeLLM | FakeLLM
+    if settings.providers == "real" and settings.anthropic_api_key is not None:
+        llm = ClaudeLLM(settings.anthropic_api_key.get_secret_value(), settings.llm_model)
+    else:
+        llm = FakeLLM()
+    return github, embeddings, llm
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -31,25 +54,12 @@ async def lifespan(app: FastAPI):
     log = get_logger(__name__)
     app.state.started_at = datetime.now(UTC)
     if not check_database().reachable:
-        raise RuntimeError("Database unreachable at DATABASE_URL; start it with `make db`.")
+        raise RuntimeError(DATABASE_UNREACHABLE)
     run_migrations()
     get_pool()
     fail_interrupted()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
-    token = settings.github_token.get_secret_value() if settings.github_token else None
-    app.state.github = GitHubClient(token)
-    if settings.providers == "real" and settings.voyage_api_key is not None:
-        app.state.embeddings = VoyageEmbeddings(
-            settings.voyage_api_key.get_secret_value(),
-            settings.embedding_model,
-            settings.embedding_dims,
-        )
-    else:
-        app.state.embeddings = FakeEmbeddings(settings.embedding_dims)
-    if settings.providers == "real" and settings.anthropic_api_key is not None:
-        app.state.llm = ClaudeLLM(settings.anthropic_api_key.get_secret_value(), settings.llm_model)
-    else:
-        app.state.llm = FakeLLM()
+    app.state.github, app.state.embeddings, app.state.llm = build_clients()
     log.info(
         "service_started",
         version=settings.app_version,

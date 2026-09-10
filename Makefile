@@ -1,4 +1,4 @@
-.PHONY: install db run test lint format audit check
+.PHONY: install db run test lint format audit check eval
 
 install:
 	uv sync --all-groups
@@ -27,3 +27,7 @@ audit:
 check: lint
 	uv run ruff format --check .
 	uv run pytest
+
+# Spends money with PROVIDERS=real; `make eval ARGS=--reindex` forces a re-index.
+eval:
+	uv run python -m evals.run_evals $(ARGS)

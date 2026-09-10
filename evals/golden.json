@@ -1,0 +1,93 @@
+{
+  "repo": "https://github.com/fastapi/full-stack-fastapi-template",
+  "branch": "master",
+  "commit": "cb740b656d7a0a6c5e12c7bf8e50343ec94ee9c7",
+  "entries": [
+    {
+      "id": 1,
+      "question": "What does this project do?",
+      "expect": {"path": "README.md"},
+      "proves": "README windows"
+    },
+    {
+      "id": 2,
+      "question": "Where is the login endpoint defined?",
+      "expect": {"path": "backend/app/api/routes/login.py", "qualname": "login_access_token"},
+      "proves": "decorators in chunk"
+    },
+    {
+      "id": 3,
+      "question": "How do route handlers get a database session?",
+      "expect": {"path": "backend/app/api/deps.py", "qualname": "get_db"},
+      "proves": "semantic"
+    },
+    {
+      "id": 4,
+      "question": "Which routers make up the API?",
+      "expect": {"path": "backend/app/api/main.py"},
+      "proves": "module preamble"
+    },
+    {
+      "id": 5,
+      "question": "What fields does the User model have?",
+      "expect": {"path": "backend/app/models.py", "qualname": "User"},
+      "proves": "class chunk"
+    },
+    {
+      "id": 6,
+      "question": "How are passwords hashed?",
+      "expect": {"path": "backend/app/core/security.py", "qualname": "get_password_hash"},
+      "proves": "semantic + partial id"
+    },
+    {
+      "id": 7,
+      "question": "What does `crud.authenticate` do?",
+      "expect": {"path": "backend/app/crud.py", "qualname": "authenticate"},
+      "proves": "symbol ladder"
+    },
+    {
+      "id": 8,
+      "question": "How is the current user resolved from the token?",
+      "expect": {"path": "backend/app/api/deps.py", "qualname": "get_current_user"},
+      "proves": "semantic"
+    },
+    {
+      "id": 9,
+      "question": "What are the backend's dependencies?",
+      "expect": {"path": "backend/pyproject.toml"},
+      "proves": "manifest chunk"
+    },
+    {
+      "id": 10,
+      "question": "Where is the password-reset email built?",
+      "expect": {"path": "backend/app/utils.py", "qualname": "generate_reset_password_email"},
+      "proves": "identifier split"
+    },
+    {
+      "id": 11,
+      "question": "Where is the login page defined?",
+      "expect": {"path": "frontend/src/routes/login.tsx"},
+      "proves": "TS symbols"
+    },
+    {
+      "id": 12,
+      "question": "Which hook manages authentication state?",
+      "expect": {"path": "frontend/src/hooks/useAuth.ts"},
+      "proves": "TS symbols"
+    },
+    {
+      "id": 13,
+      "question": "Where is the Stripe integration?",
+      "expect": null,
+      "proves": "relevance floor + not-found"
+    }
+  ],
+  "conversations": [
+    {
+      "id": 14,
+      "turns": ["What does `crud.authenticate` do?", "what about its tests?"],
+      "expect": {"path": "backend/tests/crud/test_user.py"},
+      "proves": "planner rewrite"
+    }
+  ]
+}

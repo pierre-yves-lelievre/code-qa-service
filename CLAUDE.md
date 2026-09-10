@@ -17,7 +17,7 @@ When they disagree, ask; do not guess.
 | `make lint` / `make format` | ruff check / ruff format |
 | `make audit` | `pip-audit` over the locked dependencies |
 | `make check` | lint + format `--check` + test — **run before every commit** |
-| `make eval` | golden set against the demo repo (needs real keys) |
+| `make eval` | golden set against the demo repo (needs real keys); `ARGS=--reindex` to force |
 | `make smoke` | end-to-end on a tiny fixture repo with real keys |
 | `make web` | build the SPA into `app/static/` |
 | `docker compose up --build` | full stack |
@@ -53,7 +53,8 @@ evals/                # golden.json, run_evals.py
 tests/                # conftest.py, test_parsing.py, test_chunking.py, test_retrieval.py,
                       # test_store.py, test_jobs.py, test_db.py, test_github.py,
                       # test_embeddings.py, test_llm.py, test_planning.py,
-                      # test_answering.py, test_summary.py, test_api.py, fixtures/
+                      # test_answering.py, test_summary.py, test_api.py, test_evals.py,
+                      # fixtures/
 ```
 
 ## Style rules

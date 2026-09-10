@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     embedding_dims: int = 1024
     embed_usd_per_mtok: float = 0.12  # voyage-code-4 list price on 2026-09-10
     llm_model: str = "claude-sonnet-5"
+    # 2026-09-10, Sonnet 5 list price; verify on the pricing page before quoting in the README.
+    llm_usd_per_mtok_input: float = 2.00
+    llm_usd_per_mtok_output: float = 10.00
+    llm_usd_per_mtok_cache_read: float = 0.20
+    llm_usd_per_mtok_cache_write: float = 2.50
 
     # ── Limits ────────────────────────────────────────────────────────────────
     max_repo_mb: int = 200
