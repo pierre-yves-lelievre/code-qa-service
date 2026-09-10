@@ -19,9 +19,11 @@ Copy tooling from `surrogate-model-service`, then adapt.
 `tests/{__init__,conftest,test_api}.py`, `CLAUDE.md`, `.claude/settings.json`.
 
 **Dependencies** (`pyproject.toml`): fastapi, uvicorn[standard], pydantic, pydantic-settings,
-structlog, psycopg[binary,pool], pgvector, httpx, anthropic, tree-sitter,
-tree-sitter-language-pack. Dev: pytest, ruff, pre-commit, pip-audit. No `voyageai` SDK: every
-release since 0.3.4 pulls in `langchain-text-splitters`, so Voyage is called over `httpx`.
+structlog, psycopg[binary,pool], pgvector, httpx, anthropic, tree-sitter, and the pinned grammar
+wheels tree-sitter-python, tree-sitter-typescript, tree-sitter-javascript. Dev: pytest, ruff,
+pre-commit, pip-audit. No `voyageai` SDK: every release since 0.3.4 pulls in
+`langchain-text-splitters`, so Voyage is called over `httpx`. No `tree-sitter-language-pack`:
+since 1.x it fetches grammar binaries at runtime, outside the lock and pip-audit.
 
 **Pre-commit**: ruff, ruff-format, gitleaks.
 
@@ -88,16 +90,21 @@ second running job for the same repo raises; third running job overall raises.
 **Files**: `app/parsing.py`, `app/queries/python.scm`, `app/queries/typescript.scm`,
 `tests/fixtures/py_app/`, `tests/fixtures/ts_app/`, `tests/test_parsing.py`.
 
-**Contract**: `file_symbols(text: str, language: str) -> ParseResult(rows: list[SymbolRow],
-error_nodes: int)`. `SymbolRow(path, kind, name, qualname, start_line, end_line, signature, doc)`.
-Kinds: `module | class | function | method`. `LANGUAGES` maps extension → grammar name and query
-file; `.js/.jsx` use the javascript grammar with the typescript query; `.tsx` uses tsx. Every parse
-runs with tree-sitter's per-parse time limit set from settings (default 2 s); a timed-out file is
-recorded with `parse_errors=-1` and falls back to windows.
+**Contract**: `file_symbols(path: str, text: str, language: str) -> ParseResult(rows:
+list[SymbolRow], error_nodes: int)`. `SymbolRow(path, kind, name, qualname, start_line, end_line,
+signature, doc)`. Kinds: `module | class | function | method`. `LANGUAGES` maps extension →
+grammar name and query file; `.js/.jsx` use the javascript grammar with the typescript query;
+`.tsx` uses tsx. `error_nodes` counts ERROR and MISSING nodes. There is no per-file parse timeout:
+tree-sitter's cancellation (`progress_callback`) segfaults in 0.25 and 0.26 and `parse()` holds
+the GIL, so files are bounded by `max_file_kb` and the Phase 4 job timeout.
 
-**Rules**: qualname from enclosing definitions; a function whose nearest enclosing definition is a
-class is a `method`; Python `decorated_definition` parent sets `start_line`; Python doc = first
-string in body; TS doc = immediately preceding `/** */` comment; one `module` row spanning the file.
+**Rules**: qualname = the module's dotted path (from `path`: extension stripped, `/` → `.`, a
+trailing `.__init__` or `.index` dropped) plus the chain of enclosing definitions, e.g.
+`backend.app.crud.authenticate`; the module row's qualname is the dotted path. A function whose
+nearest enclosing definition is a class is a `method`; Python `decorated_definition` parent sets
+`start_line`; the signature starts at the def/class keyword line, never at a decorator (decorators
+reach the chunk through `start_line` only); Python doc = first string in body; TS doc = immediately
+preceding `/** */` comment; one `module` row spanning the file.
 
 **Tests** (unit, no db):
 - Python: class, method, nested function, decorated function includes the decorator line,
@@ -105,13 +112,12 @@ string in body; TS doc = immediately preceding `/** */` comment; one `module` ro
 - TypeScript: function declaration, class + method, arrow function assigned to const, JSDoc doc.
 - A file with a syntax error still yields the symbols outside the error region and reports
   `error_nodes > 0`.
-- A parse that exceeds the time limit returns the timeout marker, not an exception.
 
 **Commits**
 1. `feat: tree-sitter language table and Python definition query`
 2. `test: Python parsing fixtures and rows`
 3. `feat: TypeScript/JavaScript/TSX query and doc extraction`
-4. `test: TypeScript parsing, error-node recovery, parse timeout`
+4. `test: TypeScript parsing and error-node recovery`
 
 ---
 
@@ -147,6 +153,9 @@ equals LF; empty file yields no chunk; identical text in two files shares a hash
 
 **Files**: `app/github.py`, `app/store.py` (upserts + snapshot activate/sweep), `app/indexing.py`,
 `app/schemas.py`, `app/api.py`, `tests/test_api.py`, `tests/test_store.py`.
+
+**First**: a separate `codeqa_test` database (compose init script, `.env.test`) is created at the
+start of this phase, so job-limit tests cannot be skewed by real jobs in the dev database.
 
 **`github.py`**: `parse_repo_url(url) -> RepoRef(owner, name, branch)` (host must be `github.com`,
 owner/name `[A-Za-z0-9_.-]+`, branch must not start with `-`; else `InvalidRepoUrlError`);

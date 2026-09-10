@@ -97,7 +97,9 @@ tests/                # conftest.py, test_parsing.py, test_chunking.py, test_ret
 - Secrets live only in `.env` (gitignored) and settings. `gitleaks` runs in pre-commit;
   `pip-audit` runs in CI; Dependabot is enabled. Container images are pinned by tag, never `latest`.
 - Resource limits are enforced before work starts: repo size, file size, file count, clone timeout,
-  per-file parse timeout, job timeout, one running job per repo, two running jobs globally.
+  job timeout, one running job per repo, two running jobs globally. There is no per-file parse
+  timeout (tree-sitter's cancellation segfaults and `parse()` holds the GIL); a file is bounded by
+  `max_file_kb` and the job timeout. Per-file bounding (a killable worker process) is a next step.
 
 ## Cost discipline
 
