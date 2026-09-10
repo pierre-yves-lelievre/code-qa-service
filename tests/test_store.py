@@ -6,11 +6,14 @@ import pytest
 
 from app.chunking import chunk_file, window_file
 from app.config import settings
-from app.embeddings import FakeEmbeddings
+from app.embeddings import Embedded, FakeEmbeddings
+from app.errors import ProviderError
 from app.github import walk_files
 from app.indexing import _index_file
+from app.llm import FakeLLM
 from app.parsing import file_symbols
-from app.retrieval import or_terms, split_identifiers
+from app.planning import Intent, Plan, Turn, plan
+from app.retrieval import Retrieval, or_terms, retrieve, split_identifiers
 from app.store import FileRow
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -198,3 +201,114 @@ def test_vector_leg_returns_the_chunk_whose_text_is_the_query_first(store, db):
     assert hits[0].id == chunk_id
     assert hits[0].score == pytest.approx(1.0)
     assert all(h.score < 0.35 for h in hits[1:])  # hash-seeded noise: mechanics, not meaning
+
+
+# ── Retrieval pipeline ────────────────────────────────────────────────────────
+
+SENTENCE = "how is the tax rate for a country computed"  # no chunk has every word: AND is empty
+
+
+class _NoQueryEmbeddings(FakeEmbeddings):
+    """Fake embeddings whose query call fails, as an unreachable provider would."""
+
+    def embed_query(self, text: str) -> Embedded:
+        """Fail after the retries, like Voyage."""
+        raise ProviderError("Voyage failed after 5 attempts.")
+
+
+def _plan(query: str, *identifiers: str, intent: Intent = "explain") -> Plan:
+    """A plan as the planner would return it."""
+    return Plan(query, identifiers, intent, "ok")
+
+
+def _retrieve(store, snapshot_id: int, plan: Plan) -> Retrieval:
+    """Retrieve over the snapshot with fake query vectors."""
+    return retrieve(plan, snapshot_id, store, FakeEmbeddings(settings.embedding_dims))
+
+
+def test_a_failing_vector_leg_leaves_the_other_two(store):
+    snapshot_id = _py_snapshot(store)
+    embeddings = _NoQueryEmbeddings(settings.embedding_dims)
+    result = retrieve(_plan("slugify"), snapshot_id, store, embeddings)
+    statuses = {leg: trace["status"] for leg, trace in result.legs.items()}
+    assert statuses == {"symbol": "ok", "fts": "ok", "vector": "unavailable"}
+    assert result.full[0].qualname == "shop.util.slugify"
+    assert result.embed_tokens == 0
+
+
+def test_a_failing_store_leg_leaves_the_other_two(store, monkeypatch):
+    snapshot_id = _py_snapshot(store)
+
+    def _broken(*args: object) -> None:
+        """Fail like a lost connection."""
+        raise RuntimeError("connection lost")
+
+    monkeypatch.setattr(store, "text_search", _broken)
+    result = _retrieve(store, snapshot_id, _plan("slugify"))
+    statuses = {leg: trace["status"] for leg, trace in result.legs.items()}
+    assert statuses == {"symbol": "ok", "fts": "unavailable", "vector": "ok"}
+    assert result.legs["fts"]["hits"] == 0
+    assert result.full[0].qualname == "shop.util.slugify"
+
+
+def test_floor_fires_on_an_unrelated_question(store):
+    snapshot_id = _py_snapshot(store)
+    result = _retrieve(store, snapshot_id, _plan("Where is the Stripe integration?"))
+    assert result.legs["symbol"]["status"] == "skipped"  # no member among the tokens
+    assert result.legs["fts"]["status"] == "or_fallback"  # "the" and "is" are everywhere
+    assert result.no_relevant_sources
+
+
+def test_or_fallback_hits_alone_do_not_hold_off_the_floor(store):
+    snapshot_id = _py_snapshot(store)
+    result = _retrieve(store, snapshot_id, _plan(SENTENCE))
+    assert (result.legs["symbol"]["status"], result.legs["fts"]["status"]) == (
+        "skipped",
+        "or_fallback",
+    )
+    assert "shop.util.tax_rate" in [h.qualname for h in result.full]
+    assert result.no_relevant_sources
+
+
+def test_a_symbol_hit_holds_off_the_floor_when_full_text_only_falls_back(store):
+    snapshot_id = _py_snapshot(store)
+    result = _retrieve(store, snapshot_id, _plan(SENTENCE, "tax_rate"))
+    assert (result.legs["symbol"]["status"], result.legs["fts"]["status"]) == (
+        "ok",
+        "or_fallback",
+    )
+    assert result.full[0].qualname == "shop.util.tax_rate"
+    assert not result.no_relevant_sources
+
+
+def test_a_chunks_exact_text_as_the_query_ranks_it_first_and_clears_the_floor(store, db):
+    snapshot_id = _py_snapshot(store)
+    chunk_id, text = _chunk(db, snapshot_id, "shop.models.Product.reserve")
+    result = _retrieve(store, snapshot_id, _plan(text))
+    assert result.full[0].id == chunk_id
+    assert not result.no_relevant_sources
+
+
+def test_identifiers_are_resolved_by_membership_not_by_pattern(store):
+    snapshot_id = _py_snapshot(store)
+    result = _retrieve(store, snapshot_id, _plan("Stripe total Product product"))
+    assert result.identifiers == ("total", "Product")  # names in the snapshot, case and all
+
+
+def test_a_planned_follow_up_retrieves_the_symbol_it_names(store):
+    snapshot_id = _py_snapshot(store)
+    reply = {"query": "tax_rate country", "identifiers": ["tax_rate"], "intent": "lookup"}
+    first = Turn("Where is slugify?", "In shop/util.py.")
+    planned = plan("and the tax one?", [first], FakeLLM([reply]))
+    result = _retrieve(store, snapshot_id, planned)
+    assert result.identifiers == ("tax_rate",)
+    assert (result.full[0].qualname, result.full[0].tier) == ("shop.util.tax_rate", "symbol")
+
+
+def test_retrieval_never_leaves_the_snapshot(store, db):
+    _py_snapshot(store, "a" * 40)
+    newer = _py_snapshot(store, "b" * 40)  # same content: every vector is shared
+    result = _retrieve(store, newer, _plan("slugify tax rate"))
+    found = {h.id for h in result.full + result.index}
+    rows = db.execute("SELECT id FROM chunks WHERE snapshot_id = %s", (newer,)).fetchall()
+    assert found and found <= {chunk_id for (chunk_id,) in rows}
