@@ -33,7 +33,7 @@ app/
 ├── schemas.py        # Pydantic request/response models, with examples
 ├── logging_setup.py  # structlog JSON + request_id contextvar   (shared, unchanged)
 ├── db.py             # psycopg pool, migrations runner
-├── migrations/       # 0001_init.sql, numbered, append-only
+├── migrations/       # 0001_init.sql, 0002_conversations.sql; numbered, append-only
 ├── jobs.py           # Job dataclass + Postgres JobStore (create/update/get/count_active)
 ├── github.py         # GitHubClient: search(), shallow_clone(); strict URL/branch validation
 ├── parsing.py        # tree-sitter: LANGUAGES table, queries/*.scm, file_symbols() -> rows
@@ -52,8 +52,8 @@ web/                  # Vite + React + Tailwind, built into app/static (never co
 evals/                # golden.json, run_evals.py
 tests/                # conftest.py, test_parsing.py, test_chunking.py, test_retrieval.py,
                       # test_store.py, test_jobs.py, test_db.py, test_github.py,
-                      # test_embeddings.py, test_llm.py, test_planning.py, test_api.py,
-                      # fixtures/
+                      # test_embeddings.py, test_llm.py, test_planning.py,
+                      # test_answering.py, test_api.py, fixtures/
 ```
 
 ## Style rules

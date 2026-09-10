@@ -68,6 +68,17 @@ _VECTOR = (
     + " JOIN embeddings e ON e.content_hash = c.content_hash AND e.model = %s"
     " WHERE c.snapshot_id = %s ORDER BY e.embedding <=> %s LIMIT %s"
 )  # fmt: skip
+_PARTS = (
+    _HIT + ", 0.0::float8 AS score" + _FROM
+    + " WHERE c.snapshot_id = %s AND f.path = %s AND c.kind = %s AND c.part > 0"
+    " AND c.qualname IS NOT DISTINCT FROM %s AND c.name IS NOT DISTINCT FROM %s"
+    " ORDER BY c.start_line, c.part"
+)  # fmt: skip
+_TURNS = (
+    "SELECT question, answer, sources FROM (SELECT id, question, answer, sources FROM queries"
+    " WHERE repo_id = %s AND conversation_id = %s AND answer IS NOT NULL"
+    " ORDER BY id DESC LIMIT %s) t ORDER BY id"
+)
 
 
 @dataclass(frozen=True)
@@ -91,6 +102,15 @@ class Snapshot:
     commit_sha: str | None
     branch: str
     status: SnapshotStatus
+
+
+@dataclass(frozen=True)
+class StoredTurn:
+    """One answered turn of a conversation, with the sources it cited as they were briefed."""
+
+    question: str
+    answer: str
+    sources: list[dict[str, Any]]
 
 
 def _chunk_params(snapshot_id: int, file_id: int, c: Chunk) -> tuple[Any, ...]:
@@ -241,6 +261,19 @@ class ChunkStore:
             conn.execute("SET LOCAL hnsw.iterative_scan = strict_order")
             with conn.cursor(row_factory=class_row(Hit)) as cur:
                 return cur.execute(_VECTOR, (query, model, snapshot_id, query, limit)).fetchall()
+
+    def symbol_parts(self, snapshot_id: int, hit: Hit) -> list[Hit]:
+        """Every part of the symbol or section `hit` belongs to, by line then part."""
+        params = (snapshot_id, hit.path, hit.kind, hit.qualname, hit.name)
+        with self._connect() as conn, conn.cursor(row_factory=class_row(Hit)) as cur:
+            return cur.execute(_PARTS, params).fetchall()
+
+    # ── Conversations ─────────────────────────────────────────────────────────
+
+    def recent_turns(self, repo_id: int, conversation_id: str, limit: int) -> list[StoredTurn]:
+        """The conversation's last `limit` answered turns, oldest first."""
+        with self._connect() as conn, conn.cursor(row_factory=class_row(StoredTurn)) as cur:
+            return cur.execute(_TURNS, (repo_id, conversation_id, limit)).fetchall()
 
     def activate(self, snapshot_id: int, stats: dict[str, Any]) -> None:
         """Retire the repo's active snapshot and activate this one, in one transaction."""

@@ -1,8 +1,10 @@
 """ChunkStore tests against codeqa_test, one rolled-back transaction per test."""
 
+import uuid
 from pathlib import Path
 
 import pytest
+from psycopg.types.json import Jsonb
 
 from app.chunking import chunk_file, window_file
 from app.config import settings
@@ -150,6 +152,46 @@ def _chunk(db, snapshot_id: int, qualname: str) -> tuple[int, str]:
         "SELECT id, text FROM chunks WHERE snapshot_id = %s AND qualname = %s ORDER BY id LIMIT 1",
         (snapshot_id, qualname),
     ).fetchone()
+
+
+def test_symbol_parts_returns_every_part_of_the_hits_symbol_and_nothing_else(store):
+    repo_id = store.upsert_repo("octo", "big", "https://github.com/octo/big")
+    snapshot_id = store.create_snapshot(repo_id, "main", "a" * 40)
+    body = "\n".join(f"    total_{i} = compute_value({i}) + another_call({i})" for i in range(400))
+    batch = []
+    for path in ("big.py", "other.py"):
+        text = f"def big():\n{body}\n    return 0\n"
+        chunks = chunk_file(path, text, file_symbols(path, text, "python").rows)
+        batch.append((FileRow(path, "python", len(text.encode()), "symbols"), chunks))
+    store.add_files(snapshot_id, batch)
+    hits = [h for h in store.symbol_search(snapshot_id, ["big"], 50) if h.path == "big.py"]
+    assert len(hits) > 2
+    parts = store.symbol_parts(snapshot_id, hits[1])
+    assert [p.part for p in parts] == list(range(1, len(hits) + 1))
+    assert {(p.path, p.qualname) for p in parts} == {("big.py", "big.big")}
+    assert [p.start_line for p in parts] == sorted(p.start_line for p in parts)
+
+
+def _log_turn(db, repo_id: int, conversation_id: str, n: int, answer: str | None = "a") -> None:
+    """Insert one `queries` row for a conversation."""
+    db.execute(
+        "INSERT INTO queries (request_id, repo_id, conversation_id, question, answer, sources,"
+        " not_found) VALUES (%s, %s, %s, %s, %s, %s, false)",
+        (f"r{n}", repo_id, conversation_id, f"q{n}", answer, Jsonb([{"n": n}])),
+    )
+
+
+def test_recent_turns_are_the_last_answered_ones_of_the_conversation_oldest_first(store, db):
+    repo_id = store.upsert_repo("octo", "demo", "https://github.com/octo/demo")
+    ours, theirs = str(uuid.uuid4()), str(uuid.uuid4())
+    for n in range(1, 7):
+        _log_turn(db, repo_id, ours, n)
+    _log_turn(db, repo_id, ours, 7, answer=None)  # a failed call is not history
+    _log_turn(db, repo_id, theirs, 8)
+    turns = store.recent_turns(repo_id, ours, 4)
+    assert [t.question for t in turns] == ["q3", "q4", "q5", "q6"]
+    assert turns[0].sources == [{"n": 3}]
+    assert store.recent_turns(repo_id, str(uuid.uuid4()), 4) == []
 
 
 def test_membership_keeps_names_qualnames_and_dotted_suffixes_in_order(store):
