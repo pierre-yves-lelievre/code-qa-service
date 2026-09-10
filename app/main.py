@@ -14,17 +14,17 @@ from app.logging_setup import configure_logging, get_logger
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Configure logging, create the models directory, and record the startup timestamp."""
+    """Configure logging, create the data directory, and record the startup timestamp."""
     configure_logging(settings.log_level)
     log = get_logger(__name__)
     app.state.started_at = datetime.now(UTC)
-    log.info("startup", version=settings.app_version, models_dir=str(settings.models_dir))
-    settings.models_dir.mkdir(parents=True, exist_ok=True)
+    log.info("startup", version=settings.app_version, data_dir=str(settings.data_dir))
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
     yield
     log.info("shutdown")
 
 
-app = FastAPI(title="Surrogate Model Service", version=settings.app_version, lifespan=lifespan)
+app = FastAPI(title="Code Q&A Service", version=settings.app_version, lifespan=lifespan)
 
 # Set started_at at module load so it is always present even if the lifespan
 # has not yet run (e.g. during import in tests before TestClient enters context).

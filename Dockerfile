@@ -3,17 +3,21 @@ FROM python:3.12-slim AS builder
 
 WORKDIR /build
 
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Install uv (pinned; never latest)
+COPY --from=ghcr.io/astral-sh/uv:0.10.10 /uv /usr/local/bin/uv
 
 # Install runtime deps into an isolated venv for clean copying
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project --python python3.12 \
-    --link-mode=copy \
-    && uv pip install --python /build/.venv/bin/python -e . --no-deps
+    --link-mode=copy
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
+
+# git is needed to shallow-clone the repositories being indexed
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -25,12 +29,12 @@ COPY app/ app/
 
 # Non-root user
 RUN adduser --disabled-password --no-create-home appuser \
-    && mkdir -p /app/models \
+    && mkdir -p /app/data \
     && chown -R appuser:appuser /app
 
 ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
-ENV MODELS_DIR=/app/models
+ENV DATA_DIR=/app/data
 
 EXPOSE 8000
 

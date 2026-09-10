@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run ruff format app tests evals && uv run ruff check --fix app tests evals"
+            "command": "uv run ruff format . && uv run ruff check --fix ."
           }
         ]
       }

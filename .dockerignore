@@ -15,7 +15,12 @@ tests/
 .coverage
 
 # Runtime artefacts
-models/
+data/
+
+# Not needed in the image
+.claude/
+evals/
+web/node_modules/
 
 # Secrets / local config
 .env

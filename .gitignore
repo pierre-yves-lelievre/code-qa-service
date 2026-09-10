@@ -24,9 +24,13 @@ env/
 htmlcov/
 .tox/
 
-# Models (runtime artefacts)
-models/*
-!models/.gitkeep
+# Runtime artefacts
+data/
+app/static/
+
+# Web
+web/node_modules/
+web/dist/
 
 # Environment
 .env
