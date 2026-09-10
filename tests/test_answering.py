@@ -1,5 +1,6 @@
-"""Answering: the briefing, history and top-hit expansion. Pure; no database, no API."""
+"""Answering: briefing, history, top-hit expansion, citation checks. Pure; no database, no API."""
 
+import json
 from dataclasses import replace
 from typing import Any
 
@@ -7,16 +8,28 @@ import pytest
 
 from app.answering import (
     CACHE,
+    EXCERPT_CHARS,
+    EXCERPT_LINES,
     FLOOR_NOTE,
     INDEX_HEADER,
+    NO_CITATIONS_NOTE,
+    NOT_FOUND,
     SYSTEM,
+    TRUNCATED_NOTE,
     Block,
     Briefed,
     brief,
+    check,
+    excerpt,
     expand_top,
+    from_stored,
+    is_not_found,
     repo_context,
+    resolve,
+    stored,
     to_briefed,
 )
+from app.llm import Citation, Completion, Usage
 from app.retrieval import ENUMERATE_INDEX_HITS, Hit, split_hits
 from app.store import StoredTurn
 
@@ -234,3 +247,96 @@ def test_block_lines_of_a_briefed_source_come_from_each_part():
     source = to_briefed([_hit(1, line=5)], SHA)
     assert source.blocks == (Block("def total(): ...", 5, 14),)
     assert source.title == "shop.cart.total"
+
+
+# ── Checks ────────────────────────────────────────────────────────────────────
+
+REPO_URL = "https://github.com/octo/shop"
+PARTS = to_briefed(
+    [
+        _hit(i, part=i, line=i * 10, text=f"shop/cart.py :: total (part {i})\nline {i}")
+        for i in (1, 2, 3)
+    ],
+    SHA,
+)
+OLD = to_briefed([_hit(9, path="docs/my file#1.md", qualname=None)], "b" * 40)
+BRIEFED = (OLD, PARTS)
+
+
+def _cite(index: int, source: str, start: int = 0, end: int = 1) -> Citation:
+    """A citation of blocks [start, end) of the search result at `index`."""
+    return Citation(index, source, None, "…", start, end)
+
+
+def _completion(*citations: Citation, text: str = "It is computed.", truncated=False) -> Completion:
+    """An answer with the given citations."""
+    return Completion(text, citations, Usage(), truncated)
+
+
+def test_citations_outside_the_briefing_or_with_another_source_are_dropped():
+    citations = [_cite(7, PARTS.source), _cite(0, PARTS.source), _cite(1, PARTS.source)]
+    checked = check(_completion(*citations), BRIEFED, REPO_URL, floor=False, retrieved=True)
+    assert [s.source for s in checked.sources] == [PARTS.source]
+    assert checked.notes == ["2 citations were dropped: not a source that was provided."]
+    one = check(_completion(_cite(5, "x")), BRIEFED, REPO_URL, floor=False, retrieved=True)
+    assert one.notes[0] == "1 citation was dropped: not a source that was provided."
+
+
+def test_citations_of_one_source_merge_and_narrow_its_lines_to_the_cited_blocks():
+    citations = [_cite(1, PARTS.source, 1, 2), _cite(0, OLD.source), _cite(1, PARTS.source, 2, 3)]
+    sources, dropped = resolve(citations, BRIEFED, REPO_URL)
+    assert dropped == 0
+    assert [s.path for s in sources] == ["shop/cart.py", "docs/my file#1.md"]  # first-cited order
+    parts = sources[0]
+    assert (parts.start_line, parts.end_line) == (20, 39)
+    assert [b.start_line for b in parts.blocks] == [20, 30]
+    assert parts.excerpt == "line 2\nline 3"  # the header line of each part is dropped
+    assert parts.github_url == f"{REPO_URL}/blob/{SHA}/shop/cart.py#L20-L39"
+
+
+def test_the_link_quotes_the_path_and_uses_the_sources_own_commit():
+    (old,), _ = resolve([_cite(0, OLD.source)], BRIEFED, REPO_URL)
+    assert old.github_url == f"{REPO_URL}/blob/{'b' * 40}/docs/my%20file%231.md#L1-L10"
+
+
+def test_an_empty_block_range_is_dropped():
+    assert resolve([_cite(1, PARTS.source, 3, 3)], BRIEFED, REPO_URL) == ([], 1)
+
+
+def test_the_excerpt_is_capped_in_lines_and_characters():
+    long = Block("header\n" + "\n".join("y" * 100 for _ in range(20)), 1, 21)
+    text = excerpt([long])
+    assert len(text) == EXCERPT_CHARS and text.count("\n") < EXCERPT_LINES
+    assert excerpt([Block("header\n" + "\n".join(map(str, range(20))), 1, 21)]).count("\n") == 11
+
+
+@pytest.mark.parametrize(
+    ("text", "floor", "retrieved", "expected"),
+    [
+        ("It is in cart.py.", False, True, False),
+        ("It is in cart.py.", True, True, True),  # the floor fired
+        ("It is in cart.py.", False, False, True),  # nothing was retrieved
+        ("not found in the indexed code. Try billing/.", False, True, True),  # the model said so
+    ],
+)
+def test_not_found_comes_from_the_floor_no_sources_or_the_model(text, floor, retrieved, expected):
+    assert is_not_found(text, floor, retrieved) is expected
+
+
+def test_an_uncited_answer_is_noted_unless_it_is_not_found():
+    assert check(_completion(), BRIEFED, REPO_URL, False, True).notes == [NO_CITATIONS_NOTE]
+    not_found = check(_completion(text=f"{NOT_FOUND}."), BRIEFED, REPO_URL, False, True)
+    assert (not_found.not_found, not_found.notes) == (True, [])
+
+
+def test_a_truncated_answer_is_noted():
+    checked = check(
+        _completion(_cite(0, OLD.source), truncated=True), BRIEFED, REPO_URL, False, True
+    )
+    assert checked.notes == [TRUNCATED_NOTE]
+
+
+def test_a_stored_source_briefs_again_as_it_was_cited():
+    (source,), _ = resolve([_cite(1, PARTS.source, 0, 2)], BRIEFED, REPO_URL)
+    again = from_stored(json.loads(json.dumps(stored(source))))
+    assert again == replace(PARTS, blocks=PARTS.blocks[:2])

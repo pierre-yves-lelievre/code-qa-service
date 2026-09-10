@@ -6,10 +6,12 @@ search-result blocks, and the compact index as plain lines.
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
+from urllib.parse import quote
 
 from app.chunking import estimate_tokens
+from app.llm import Citation, Completion
 from app.planning import HISTORY_TURNS
 from app.retrieval import Hit
 from app.store import StoredTurn
@@ -27,7 +29,10 @@ FLOOR_NOTE = (
     ' "Not found in the indexed code".'
 )
 INDEX_HEADER = "Other code that may be relevant, not provided in full (path :: symbol — signature):"
+NO_CITATIONS_NOTE = "The answer cites no sources."
+TRUNCATED_NOTE = "The answer was cut off at the token limit."
 EXPAND_TOKENS = 4_000
+EXCERPT_LINES, EXCERPT_CHARS = 12, 800
 CACHE = {"type": "ephemeral"}
 
 
@@ -61,6 +66,33 @@ class Briefing:
     system: list[dict[str, Any]]
     messages: list[dict[str, Any]]
     sources: tuple[Briefed, ...]
+
+
+@dataclass(frozen=True)
+class Source:
+    """A cited source: the response fields, plus what it takes to brief it again."""
+
+    path: str
+    start_line: int
+    end_line: int
+    kind: str
+    qualname: str | None
+    tier: str | None
+    excerpt: str
+    github_url: str
+    source: str
+    title: str
+    blocks: tuple[Block, ...]
+    commit_sha: str
+
+
+@dataclass(frozen=True)
+class Checked:
+    """The answer after the validity check: its sources, the not-found verdict, the notes."""
+
+    sources: list[Source]
+    not_found: bool
+    notes: list[str]
 
 
 # ── Sources ───────────────────────────────────────────────────────────────────
@@ -179,6 +211,87 @@ def _search_result(source: Briefed) -> dict[str, Any]:
         "content": [{"type": "text", "text": block.text} for block in source.blocks],
         "citations": {"enabled": True},
     }
+
+
+# ── Checks ────────────────────────────────────────────────────────────────────
+
+
+def check(
+    completion: Completion, briefed: Sequence[Briefed], repo_url: str, floor: bool, retrieved: bool
+) -> Checked:
+    """Keep only citations of briefed sources, decide not-found, and say what was dropped."""
+    sources, dropped = resolve(completion.citations, briefed, repo_url)
+    not_found = is_not_found(completion.text, floor, retrieved)
+    notes: list[str] = []
+    if dropped:
+        were = "citation was" if dropped == 1 else "citations were"
+        notes.append(f"{dropped} {were} dropped: not a source that was provided.")
+    if not sources and not not_found:
+        notes.append(NO_CITATIONS_NOTE)
+    if completion.truncated:
+        notes.append(TRUNCATED_NOTE)
+    return Checked(sources, not_found, notes)
+
+
+def resolve(
+    citations: Sequence[Citation], briefed: Sequence[Briefed], repo_url: str
+) -> tuple[list[Source], int]:
+    """Cited sources in first-cited order, narrowed to the cited blocks; and how many dropped."""
+    cited: dict[tuple[str, str], tuple[Briefed, set[Block]]] = {}
+    dropped = 0
+    for citation in citations:
+        i = citation.search_result_index
+        if not 0 <= i < len(briefed) or briefed[i].source != citation.source:
+            dropped += 1
+            continue
+        source = briefed[i]
+        blocks = source.blocks[max(citation.start_block, 0) : citation.end_block]
+        if not blocks:
+            dropped += 1
+            continue
+        cited.setdefault((source.source, source.commit_sha), (source, set()))[1].update(blocks)
+    return [_source(s, blocks, repo_url) for s, blocks in cited.values()], dropped
+
+
+def _source(briefed: Briefed, blocks: set[Block], repo_url: str) -> Source:
+    """A cited source with its lines, excerpt and link built from what was briefed."""
+    ordered = tuple(sorted(blocks, key=lambda b: (b.start_line, b.end_line)))
+    start, end = ordered[0].start_line, max(b.end_line for b in ordered)
+    return Source(
+        path=briefed.path,
+        start_line=start,
+        end_line=end,
+        kind=briefed.kind,
+        qualname=briefed.qualname,
+        tier=briefed.tier,
+        excerpt=excerpt(ordered),
+        github_url=github_url(repo_url, briefed.commit_sha, briefed.path, start, end),
+        source=briefed.source,
+        title=briefed.title,
+        blocks=ordered,
+        commit_sha=briefed.commit_sha,
+    )
+
+
+def excerpt(blocks: Sequence[Block]) -> str:
+    """The cited text without each chunk's header line, cut to a few lines."""
+    lines = [line for block in blocks for line in block.text.splitlines()[1:]]
+    return "\n".join(lines[:EXCERPT_LINES])[:EXCERPT_CHARS]
+
+
+def github_url(repo_url: str, commit_sha: str, path: str, start: int, end: int) -> str:
+    """A permalink built from stored fields only; nothing the model wrote becomes a URL."""
+    return f"{repo_url}/blob/{commit_sha}/{quote(path)}#L{start}-L{end}"
+
+
+def is_not_found(answer: str, floor: bool, retrieved: bool) -> bool:
+    """Not found when the floor fired, nothing was retrieved, or the model said so."""
+    return floor or not retrieved or NOT_FOUND.casefold() in answer.casefold()
+
+
+def stored(source: Source) -> dict[str, Any]:
+    """A cited source as `queries.sources` keeps it, enough to brief it again."""
+    return asdict(source)
 
 
 def _index_lines(index: Sequence[Hit]) -> str:
