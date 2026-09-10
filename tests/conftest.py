@@ -1,18 +1,41 @@
-"""Shared with surrogate-model-service; adapted: bare client plus rolled-back db fixtures."""
+"""Shared with surrogate-model-service; adapted: codeqa_test, bare client, rolled-back db."""
 
-import itertools
-from collections.abc import Callable, Iterator
-from contextlib import nullcontext
+import os
 from pathlib import Path
 
-import psycopg
-import pytest
-from fastapi.testclient import TestClient
+ENV_TEST = Path(__file__).parent.parent / ".env.test"
+TEST_DATABASE = "codeqa_test"
 
-from app.config import settings
-from app.db import run_migrations
-from app.jobs import JobStore
-from app.main import app
+
+def _load_env_test() -> None:
+    """Put `.env.test` into the environment, over the shell and `.env`, before `app` loads."""
+    for line in ENV_TEST.read_text().splitlines():
+        key, sep, value = line.partition("=")
+        if sep and not key.lstrip().startswith("#"):
+            os.environ[key.strip()] = value.strip()
+
+
+_load_env_test()
+
+import itertools  # noqa: E402
+from collections.abc import Callable, Iterator  # noqa: E402
+from contextlib import nullcontext  # noqa: E402
+from urllib.parse import urlsplit  # noqa: E402
+
+import psycopg  # noqa: E402
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.config import settings  # noqa: E402
+from app.db import run_migrations  # noqa: E402
+from app.jobs import JobStore  # noqa: E402
+from app.main import app  # noqa: E402
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Refuse to run against any database but codeqa_test, so dev data is never touched."""
+    if urlsplit(settings.database_url).path.lstrip("/") != TEST_DATABASE:
+        pytest.exit(f"Tests run only against {TEST_DATABASE}; see .env.test.", returncode=2)
 
 
 @pytest.fixture

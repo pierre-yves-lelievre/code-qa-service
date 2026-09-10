@@ -4,7 +4,9 @@ install:
 	uv sync --all-groups
 
 db:
-	docker compose up -d db
+	docker compose up -d --wait db
+	docker compose exec -T db psql -U postgres -v ON_ERROR_STOP=1 \
+		-f /docker-entrypoint-initdb.d/10-codeqa-test.sql
 
 run:
 	uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

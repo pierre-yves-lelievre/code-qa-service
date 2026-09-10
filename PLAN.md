@@ -167,10 +167,16 @@ yields no chunk; an unchanged chunk keeps its hash when another function in the 
 ## Phase 4 — GitHub and the index job (65 min)
 
 **Files**: `app/github.py`, `app/store.py` (upserts + snapshot activate/sweep), `app/indexing.py`,
-`app/schemas.py`, `app/api.py`, `tests/test_api.py`, `tests/test_store.py`.
+`app/schemas.py`, `app/api.py`, `tests/test_api.py`, `tests/test_store.py`, `tests/test_github.py`.
 
 **First**: a separate `codeqa_test` database (compose init script, `.env.test`) is created at the
 start of this phase, so job-limit tests cannot be skewed by real jobs in the dev database.
+`docker/postgres/10-codeqa-test.sql` creates it when missing (`\gexec`). It is mounted into
+`/docker-entrypoint-initdb.d` for fresh volumes, and `make db` also runs it, so existing volumes
+get it too. `.env.test` is committed (local URL, `PROVIDERS=fake`, blank keys).
+`tests/conftest.py` loads it into the environment over the shell and `.env` before importing
+`app`, and refuses to run unless the database is `codeqa_test`. CI's service database is
+`codeqa_test`.
 
 **`github.py`**: `parse_repo_url(url) -> RepoRef(owner, name, branch)` (host must be `github.com`,
 owner/name `[A-Za-z0-9_.-]+`, branch must not start with `-`; else `InvalidRepoUrlError`);
@@ -194,6 +200,48 @@ The flip retires the old active snapshot before activating the new one, in the s
 response; size refusal; a symlink pointing outside the clone is skipped; index a fixture repo
 end-to-end with `FakeEmbeddings`, poll to `succeeded`, assert files/chunks counts and active
 snapshot; failed job leaves the previous snapshot active; re-index at same sha short-circuits.
+
+**Decisions** (agreed in the Phase 4 plan):
+- *Pre-check*: `POST /index` calls the GitHub API (`GET /repos/{owner}/{name}`) before any job
+  exists.
+  - A 404, or `private: true`, gives `GitHubRepoNotFoundError` (404, `github_repo_not_found`).
+  - A 403 or 429 gives `GitHubRateLimitedError` (429, `github_rate_limited`).
+  - A timeout or a 5xx gives `GitHubUnavailableError` (502, `github_unavailable`). The same
+    mapping applies to search.
+  - A `size` over `max_repo_mb` gives `RepoTooLargeError` (413).
+  - `default_branch` fills a URL without `/tree/<branch>`, and `full_name` gives the canonical
+    owner and name.
+  - `CloneFailedError` (502) is for the git command only. After the clone, the checked-out bytes
+    are summed again as a second size guard, because the API's `size` is approximate.
+- *Order*: clone → sha → already-indexed short-circuit → create the `building` snapshot with its
+  sha → walk → parse/window.
+  - So a same-sha run leaves no empty snapshot row.
+  - `embed` (Phase 5) and `summary` (Phase 7) slot in before activation, together with their
+    `_run_index` parameters. Until then, the lifecycle test runs without an embed step.
+- *Timeouts*: `github_timeout_s=10`, `clone_timeout_s=120`, `job_timeout_s=1800`.
+  - The job timeout is cooperative: it is checked between stages and before each file, and the
+    clone's subprocess timeout is capped at the time remaining.
+- *Walk*:
+  - These directories are pruned and not recorded: `.git node_modules vendor dist build .venv
+    venv __pycache__ .mypy_cache .pytest_cache .tox .next target coverage`.
+  - Files are recorded as `skipped` with a `skip_reason`:
+    - `ignored`: `*.min.js`, `*.min.css`, `*.map`; the lockfiles `package-lock.json`,
+      `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `uv.lock` and `Cargo.lock`; secrets-shaped
+      files `.env`, `.env.*` (except `.env.example`), `*.pem`, `*.key` and `id_rsa*`;
+    - `symlink`, for file or directory symlinks;
+    - `outside_root`;
+    - `too_large`, over `max_file_kb`;
+    - `binary`, for a NUL byte in the first 8 KB;
+    - `lfs_pointer`;
+    - `not_utf8`.
+  - More than `max_files` walked files gives `RepoTooLargeError`.
+- *Stats* (`snapshots.stats`): `files`, `chunks`, `by_mode`, `skipped` by reason,
+  `files_with_parse_errors`, `seconds`, and `by_language` as `{lang: {files, symbols, chunks}}`.
+  - `symbols` counts definition rows, not module rows.
+  - Windowed files count under `text`.
+- *Interrupted jobs*: jobs run in-process. At startup, the lifespan marks leftover
+  `pending`/`running` jobs and `building` snapshots `failed`, so a restart cannot block a repo.
+  This assumes a single process.
 
 **Commits**
 1. `feat: repo URL validation, GitHub search proxy, shallow clone with limits`
