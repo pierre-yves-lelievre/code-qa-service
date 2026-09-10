@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     github_token: SecretStr | None = None
     embedding_model: str = "voyage-code-4"
     embedding_dims: int = 1024
+    embed_usd_per_mtok: float = 0.12  # voyage-code-4 list price on 2026-09-10
     llm_model: str = "claude-sonnet-5"
 
     # ── Limits ────────────────────────────────────────────────────────────────
@@ -40,6 +41,7 @@ class Settings(BaseSettings):
     github_timeout_s: float = 10.0
     clone_timeout_s: float = 120.0
     job_timeout_s: float = 1800.0
+    embed_timeout_s: float = 30.0
 
     # ── Retrieval ─────────────────────────────────────────────────────────────
     relevance_floor: float = 0.35

@@ -112,6 +112,14 @@ class IndexTimeoutError(ServiceError):
     default_message = "The index job timed out."
 
 
+class EmbedBudgetExceededError(ServiceError):
+    """Raised inside an index job whose embedding tokens exceed the per-job cap; on the job."""
+
+    code = "embed_budget_exceeded"
+    status_code = 413
+    default_message = "The repository needs more embedding tokens than one job may spend."
+
+
 class ProviderError(ServiceError):
     """Raised when an embedding or LLM provider call fails."""
 
