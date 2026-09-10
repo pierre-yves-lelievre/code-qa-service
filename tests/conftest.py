@@ -25,12 +25,15 @@ from contextlib import nullcontext  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
 from urllib.parse import urlsplit  # noqa: E402
 
+import httpx  # noqa: E402
 import psycopg  # noqa: E402
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app.api import get_github  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.db import run_migrations  # noqa: E402
+from app.github import GitHubClient  # noqa: E402
 from app.jobs import JobStore  # noqa: E402
 from app.main import app  # noqa: E402
 from app.store import ChunkStore  # noqa: E402
@@ -144,3 +147,33 @@ def fixture_repo(tmp_path: Path) -> Callable[[str], FixtureRepo]:
         return repo
 
     return _make
+
+
+@pytest.fixture
+def committed(migrated: None) -> Iterator[None]:
+    """For tests whose work commits (routes, the index job): empty every repo before and after."""
+
+    def _truncate() -> None:
+        """Remove all repos and, by cascade, their snapshots, files, chunks and jobs."""
+        with psycopg.connect(settings.database_url, autocommit=True) as conn:
+            conn.execute("TRUNCATE repos RESTART IDENTITY CASCADE")
+
+    _truncate()
+    yield
+    _truncate()
+
+
+@pytest.fixture
+def mock_github() -> Iterator[Callable[..., GitHubClient]]:
+    """Setter routing the app's GitHub API calls to a handler and its clones to `clone_base`."""
+
+    def _use(
+        handler: Callable[[httpx.Request], httpx.Response], clone_base: str = "file:///nowhere"
+    ):
+        """Install a GitHubClient over a MockTransport as the app's dependency."""
+        github = GitHubClient(transport=httpx.MockTransport(handler), clone_base=clone_base)
+        app.dependency_overrides[get_github] = lambda: github
+        return github
+
+    yield _use
+    app.dependency_overrides.pop(get_github, None)

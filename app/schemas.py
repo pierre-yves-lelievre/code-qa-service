@@ -1,6 +1,7 @@
 """Pydantic request and response models for the HTTP boundary."""
 
-from typing import Literal
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -37,3 +38,69 @@ class HealthResponse(BaseModel):
     providers: Literal["fake", "real"] = Field(..., json_schema_extra={"example": "fake"})
     database: DatabaseHealth
     keys: KeysHealth
+
+
+class RepoHitResponse(BaseModel):
+    """One repository search result."""
+
+    full_name: str = Field(..., json_schema_extra={"example": "fastapi/fastapi"})
+    owner: str = Field(..., json_schema_extra={"example": "fastapi"})
+    name: str = Field(..., json_schema_extra={"example": "fastapi"})
+    description: str | None = Field(None, json_schema_extra={"example": "FastAPI framework"})
+    stars: int = Field(..., json_schema_extra={"example": 90000})
+    language: str | None = Field(None, json_schema_extra={"example": "Python"})
+    size_kb: int = Field(..., json_schema_extra={"example": 28000})
+    default_branch: str = Field(..., json_schema_extra={"example": "master"})
+    url: str = Field(..., json_schema_extra={"example": "https://github.com/fastapi/fastapi"})
+    clone_url: str = Field(
+        ..., json_schema_extra={"example": "https://github.com/fastapi/fastapi.git"}
+    )
+
+
+class RepoSearchResponse(BaseModel):
+    """At most five repositories matching a search query."""
+
+    items: list[RepoHitResponse]
+
+
+class IndexRequest(BaseModel):
+    """A public GitHub repository URL, optionally ending in /tree/<branch>."""
+
+    url: str = Field(
+        ...,
+        min_length=1,
+        max_length=512,
+        json_schema_extra={"example": "https://github.com/fastapi/full-stack-fastapi-template"},
+    )
+
+
+class IndexAccepted(BaseModel):
+    """An accepted index request: poll GET /index/{job_id} for progress."""
+
+    job_id: str = Field(..., json_schema_extra={"example": "4f9c2a1e-8d7b-4c3a-9e2f-1a2b3c4d5e6f"})
+    repo_id: int = Field(..., json_schema_extra={"example": 1})
+    owner: str = Field(..., json_schema_extra={"example": "fastapi"})
+    name: str = Field(..., json_schema_extra={"example": "full-stack-fastapi-template"})
+    branch: str = Field(..., json_schema_extra={"example": "master"})
+    status: Literal["pending"] = Field(..., json_schema_extra={"example": "pending"})
+
+
+class JobResponse(BaseModel):
+    """An index job: status, stage progress, and the error when it failed."""
+
+    job_id: str = Field(..., json_schema_extra={"example": "4f9c2a1e-8d7b-4c3a-9e2f-1a2b3c4d5e6f"})
+    repo_id: int = Field(..., json_schema_extra={"example": 1})
+    status: Literal["pending", "running", "succeeded", "failed"] = Field(
+        ..., json_schema_extra={"example": "running"}
+    )
+    progress: dict[str, Any] = Field(
+        ...,
+        json_schema_extra={
+            "example": {"stage": "parsing", "files_done": 50, "files_total": 212, "chunks": 640}
+        },
+    )
+    error: str | None = Field(None, json_schema_extra={"example": None})
+    snapshot_id: int | None = Field(None, json_schema_extra={"example": 3})
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None

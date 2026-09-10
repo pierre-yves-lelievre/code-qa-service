@@ -2,13 +2,42 @@
 
 from dataclasses import asdict
 from datetime import UTC, datetime
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.db import check_database
-from app.schemas import DatabaseHealth, ErrorResponse, HealthResponse, KeysHealth
+from app.errors import (
+    GitHubRateLimitedError,
+    GitHubRepoNotFoundError,
+    GitHubUnavailableError,
+    IndexInProgressError,
+    InvalidRepoUrlError,
+    JobNotFoundError,
+    RepoTooLargeError,
+    ServiceError,
+    TooManyJobsError,
+)
+from app.github import GitHubClient, RepoRef, parse_repo_url
+from app.indexing import _run_index
+from app.jobs import JobStore
+from app.logging_setup import get_logger
+from app.schemas import (
+    DatabaseHealth,
+    ErrorResponse,
+    HealthResponse,
+    IndexAccepted,
+    IndexRequest,
+    JobResponse,
+    KeysHealth,
+    RepoHitResponse,
+    RepoSearchResponse,
+)
+from app.store import ChunkStore
+
+log = get_logger(__name__)
 
 router = APIRouter()
 
@@ -25,6 +54,39 @@ _DEGRADED_EXAMPLE = {
     "status": "degraded",
     "database": {"reachable": False, "vector_available": None, "vector_installed": None},
 }
+_INTERNAL_ERROR = {"detail": "Internal error.", "code": "internal_error"}
+_VALIDATION_ERROR = {"detail": "Field required", "code": "validation_error"}
+
+
+def _errors(*errors: type[ServiceError]) -> dict[int | str, dict[str, Any]]:
+    """OpenAPI `responses` for error types grouped by status, plus validation and internal."""
+    examples: dict[int, dict[str, Any]] = {422: {"validation_error": {"value": _VALIDATION_ERROR}}}
+    for error in errors:
+        body = {"detail": error.default_message, "code": error.code}
+        examples.setdefault(error.status_code, {})[error.code] = {"value": body}
+    examples[500] = {"internal_error": {"value": _INTERNAL_ERROR}}
+    return {
+        status: {"model": ErrorResponse, "content": {"application/json": {"examples": named}}}
+        for status, named in sorted(examples.items())
+    }
+
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
+
+
+def get_github(request: Request) -> GitHubClient:
+    """The app's GitHubClient, built in the lifespan; tests override it."""
+    return request.app.state.github
+
+
+def get_jobs() -> JobStore:
+    """A JobStore over the pool."""
+    return JobStore()
+
+
+def get_store() -> ChunkStore:
+    """A ChunkStore over the pool."""
+    return ChunkStore()
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -48,11 +110,7 @@ _DEGRADED_EXAMPLE = {
         },
         500: {
             "model": ErrorResponse,
-            "content": {
-                "application/json": {
-                    "example": {"detail": "Internal error.", "code": "internal_error"}
-                }
-            },
+            "content": {"application/json": {"example": _INTERNAL_ERROR}},
         },
     },
 )
@@ -73,3 +131,88 @@ def health(request: Request) -> JSONResponse:
         ),
     )
     return JSONResponse(status_code=200 if healthy else 503, content=body.model_dump())
+
+
+@router.get(
+    "/repos/search",
+    response_model=RepoSearchResponse,
+    summary="Search GitHub repositories",
+    description=(
+        "Proxies GitHub repository search and returns the top five results with size, "
+        "language, default branch and clone URL. Unauthenticated unless GITHUB_TOKEN is set."
+    ),
+    responses=_errors(GitHubRateLimitedError, GitHubUnavailableError),
+)
+def search_repos(
+    q: Annotated[str, Query(min_length=1, max_length=256, description="GitHub search query.")],
+    github: Annotated[GitHubClient, Depends(get_github)],
+) -> RepoSearchResponse:
+    """Top five GitHub repositories for a query."""
+    return RepoSearchResponse(items=[RepoHitResponse(**asdict(hit)) for hit in github.search(q)])
+
+
+@router.post(
+    "/index",
+    status_code=202,
+    response_model=IndexAccepted,
+    summary="Index a public GitHub repository",
+    description=(
+        "Validates the URL, checks the repository on the GitHub API (exists, public, under "
+        "the size limit), then starts a background job that shallow-clones, parses and chunks "
+        "it. Returns 202 with the job id; poll GET /index/{job_id}. One active job per "
+        "repository and a global cap on active jobs are enforced here."
+    ),
+    responses=_errors(
+        InvalidRepoUrlError,
+        GitHubRepoNotFoundError,
+        IndexInProgressError,
+        RepoTooLargeError,
+        GitHubRateLimitedError,
+        TooManyJobsError,
+        GitHubUnavailableError,
+    ),
+)
+def index_repo(
+    body: IndexRequest,
+    background: BackgroundTasks,
+    github: Annotated[GitHubClient, Depends(get_github)],
+    jobs: Annotated[JobStore, Depends(get_jobs)],
+    store: Annotated[ChunkStore, Depends(get_store)],
+) -> IndexAccepted:
+    """Pre-check a repository, create its job, and run the index in the background."""
+    requested = parse_repo_url(body.url)
+    info = github.repo(requested)
+    ref = RepoRef(info.owner, info.name, requested.branch or info.default_branch)
+    repo_id = store.upsert_repo(
+        info.owner, info.name, f"https://github.com/{info.owner}/{info.name}"
+    )
+    job = jobs.create(repo_id)
+    background.add_task(_run_index, job.id, repo_id, ref, jobs, store, github)
+    log.info("index_requested", job_id=job.id, repo_id=repo_id)
+    return IndexAccepted(
+        job_id=job.id,
+        repo_id=repo_id,
+        owner=ref.owner,
+        name=ref.name,
+        branch=ref.branch or info.default_branch,
+        status="pending",
+    )
+
+
+@router.get(
+    "/index/{job_id}",
+    response_model=JobResponse,
+    summary="Index job status",
+    description=(
+        "Status of an index job: pending, running (with stage and file counts), succeeded, "
+        "or failed with its error. A failed clone reads `Cloning the repository failed.`"
+    ),
+    responses=_errors(JobNotFoundError),
+)
+def get_index_job(job_id: str, jobs: Annotated[JobStore, Depends(get_jobs)]) -> JobResponse:
+    """One index job, or 404 when the id is unknown."""
+    job = jobs.get(job_id)
+    if job is None:
+        raise JobNotFoundError()
+    fields = asdict(job)
+    return JobResponse(job_id=fields.pop("id"), **fields)

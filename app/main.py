@@ -17,13 +17,14 @@ from app.errors import (
     unhandled_error_handler,
     validation_error_handler,
 )
+from app.github import GitHubClient
 from app.jobs import fail_interrupted
 from app.logging_setup import configure_logging, get_logger
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Require the database, migrate, open the pool, fail interrupted jobs, make data_dir."""
+    """Check the database, migrate, open the pool, fail interrupted jobs, build clients."""
     configure_logging(settings.log_level)
     log = get_logger(__name__)
     app.state.started_at = datetime.now(UTC)
@@ -33,6 +34,8 @@ async def lifespan(app: FastAPI):
     get_pool()
     fail_interrupted()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    token = settings.github_token.get_secret_value() if settings.github_token else None
+    app.state.github = GitHubClient(token)
     log.info(
         "service_started",
         version=settings.app_version,
@@ -42,6 +45,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        app.state.github.close()
         close_pool()
         log.info("service_stopped")
 
