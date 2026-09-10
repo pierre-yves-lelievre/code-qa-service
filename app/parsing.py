@@ -6,19 +6,32 @@ from functools import cache
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
+import tree_sitter_javascript
 import tree_sitter_python
+import tree_sitter_typescript
 from tree_sitter import Language, Node, Parser, Query, QueryCursor
 
 QUERIES_DIR = Path(__file__).parent / "queries"
 
 Kind = Literal["module", "class", "function", "method"]
 
-# Extension → (grammar name, query file).
+# Extension → (grammar name, query file). JavaScript and TSX share the TypeScript query.
 LANGUAGES: dict[str, tuple[str, str]] = {
     ".py": ("python", "python.scm"),
+    ".ts": ("typescript", "typescript.scm"),
+    ".mts": ("typescript", "typescript.scm"),
+    ".cts": ("typescript", "typescript.scm"),
+    ".tsx": ("tsx", "typescript.scm"),
+    ".js": ("javascript", "typescript.scm"),
+    ".jsx": ("javascript", "typescript.scm"),
+    ".mjs": ("javascript", "typescript.scm"),
+    ".cjs": ("javascript", "typescript.scm"),
 }
 _GRAMMARS = {
     "python": tree_sitter_python.language,
+    "typescript": tree_sitter_typescript.language_typescript,
+    "tsx": tree_sitter_typescript.language_tsx,
+    "javascript": tree_sitter_javascript.language,
 }
 _QUERY_FILES = {grammar: query for grammar, query in LANGUAGES.values()}
 _MODULE_SUFFIXES = (".__init__", ".index")
@@ -125,7 +138,7 @@ def file_symbols(path: str, text: str, language: str) -> ParseResult:
                 start_line=outer.start_point.row + 1,
                 end_line=_last_line(node),
                 signature=_signature(source, node, body),
-                doc=_doc(language, source, body),
+                doc=_doc(language, source, node, body),
             )
         )
     return ParseResult(rows=rows, error_nodes=_count_errors(root))
@@ -158,6 +171,8 @@ def _signature(source: bytes, node: Node, body: Node) -> str:
     """Source from the def/class keyword up to the body, on one line, without a trailing ':'."""
     start = next((c for c in node.children if c.type not in ("decorator", "comment")), node)
     head = source[start.start_byte : body.start_byte].decode("utf-8", errors="replace")
+    if node.type == "variable_declarator" and node.parent is not None:
+        head = f"{_text(source, node.parent.children[0])} {head}"  # const / let / var
     return " ".join(head.split()).removesuffix(":").rstrip()
 
 
@@ -175,14 +190,28 @@ def _count_errors(root: Node) -> int:
 # ── Docs ──────────────────────────────────────────────────────────────────────
 
 
-def _doc(language: str, source: bytes, body: Node) -> str | None:
-    """The doc of a definition, from its body."""
-    return _python_doc(source, body)
+def _doc(language: str, source: bytes, node: Node, body: Node) -> str | None:
+    """A definition's doc: the Python docstring in its body, or the JSDoc just above it."""
+    if language == "python":
+        return _python_doc(source, body)
+    return _jsdoc(source, _statement(node))
 
 
 def _module_doc(language: str, source: bytes, root: Node) -> str | None:
-    """The doc of a whole file."""
-    return _python_doc(source, root)
+    """A file's doc: the Python module docstring, or a detached JSDoc heading the file."""
+    if language == "python":
+        return _python_doc(source, root)
+    for child in root.named_children:
+        if child.type == "hash_bang_line" or (child.type == "comment" and not _is_jsdoc(child)):
+            continue
+        if not _is_jsdoc(child):
+            return None
+        # A JSDoc directly above the first statement documents that statement, not the file.
+        following = child.next_named_sibling
+        if following is None or following.start_point.row > child.end_point.row + 1:
+            return _clean_jsdoc(_text(source, child))
+        return None
+    return None
 
 
 def _python_doc(source: bytes, block: Node) -> str | None:
@@ -195,3 +224,34 @@ def _python_doc(source: bytes, block: Node) -> str | None:
         return None
     raw = source[string.children[0].end_byte : string.children[-1].start_byte]
     return inspect.cleandoc(raw.decode("utf-8", errors="replace")) or None
+
+
+def _statement(node: Node) -> Node:
+    """The statement a definition's JSDoc sits above: through its declaration and export."""
+    if node.type == "variable_declarator" and node.parent is not None:
+        node = node.parent
+    if node.parent is not None and node.parent.type == "export_statement":
+        node = node.parent
+    return node
+
+
+def _jsdoc(source: bytes, statement: Node) -> str | None:
+    """The `/** */` comment ending on the line before a statement, or on its first line."""
+    comment = statement.prev_named_sibling
+    if comment is None or not _is_jsdoc(comment):
+        return None
+    if comment.end_point.row < statement.start_point.row - 1:
+        return None
+    return _clean_jsdoc(_text(source, comment))
+
+
+def _is_jsdoc(node: Node) -> bool:
+    """Whether a node is a `/** ... */` block comment."""
+    return node.type == "comment" and node.text.startswith(b"/**") and node.text != b"/**/"
+
+
+def _clean_jsdoc(comment: str) -> str | None:
+    """Comment text without the `/** */` markers or each line's leading '*'."""
+    body = comment.removeprefix("/**").removesuffix("*/")
+    lines = [line.strip().removeprefix("*").strip() for line in body.splitlines()]
+    return "\n".join(lines).strip() or None
