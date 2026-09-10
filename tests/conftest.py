@@ -33,6 +33,7 @@ from app.config import settings  # noqa: E402
 from app.db import run_migrations  # noqa: E402
 from app.jobs import JobStore  # noqa: E402
 from app.main import app  # noqa: E402
+from app.store import ChunkStore  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -103,6 +104,12 @@ def db(migrated: None) -> Iterator[psycopg.Connection]:
 def jobs(db: psycopg.Connection) -> JobStore:
     """JobStore whose every unit of work runs inside the test's rolled-back transaction."""
     return JobStore(connect=lambda: nullcontext(db))
+
+
+@pytest.fixture
+def store(db: psycopg.Connection) -> ChunkStore:
+    """ChunkStore whose every unit of work runs inside the test's rolled-back transaction."""
+    return ChunkStore(connect=lambda: nullcontext(db))
 
 
 @pytest.fixture
