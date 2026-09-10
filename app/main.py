@@ -1,3 +1,5 @@
+"""Shared with surrogate-model-service; adapted: data_dir, catch-all 500, past-tense events."""
+
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -8,7 +10,12 @@ from fastapi.exceptions import RequestValidationError
 
 from app.api import router
 from app.config import settings
-from app.errors import ServiceError, service_error_handler, validation_error_handler
+from app.errors import (
+    ServiceError,
+    service_error_handler,
+    unhandled_error_handler,
+    validation_error_handler,
+)
 from app.logging_setup import configure_logging, get_logger
 
 
@@ -18,10 +25,15 @@ async def lifespan(app: FastAPI):
     configure_logging(settings.log_level)
     log = get_logger(__name__)
     app.state.started_at = datetime.now(UTC)
-    log.info("startup", version=settings.app_version, data_dir=str(settings.data_dir))
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    log.info(
+        "service_started",
+        version=settings.app_version,
+        providers=settings.providers,
+        data_dir=str(settings.data_dir),
+    )
     yield
-    log.info("shutdown")
+    log.info("service_stopped")
 
 
 app = FastAPI(title="Code Q&A Service", version=settings.app_version, lifespan=lifespan)
@@ -32,6 +44,7 @@ app.state.started_at = datetime.now(UTC)
 
 app.add_exception_handler(ServiceError, service_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)
+app.add_exception_handler(Exception, unhandled_error_handler)
 
 
 @app.middleware("http")

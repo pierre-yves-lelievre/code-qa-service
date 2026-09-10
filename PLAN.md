@@ -19,8 +19,9 @@ Copy tooling from `surrogate-model-service`, then adapt.
 `tests/{__init__,conftest,test_api}.py`, `CLAUDE.md`, `.claude/settings.json`.
 
 **Dependencies** (`pyproject.toml`): fastapi, uvicorn[standard], pydantic, pydantic-settings,
-structlog, psycopg[binary,pool], pgvector, httpx, anthropic, voyageai, tree-sitter,
-tree-sitter-language-pack. Dev: pytest, ruff, pre-commit, pip-audit.
+structlog, psycopg[binary,pool], pgvector, httpx, anthropic, tree-sitter,
+tree-sitter-language-pack. Dev: pytest, ruff, pre-commit, pip-audit. No `voyageai` SDK: every
+release since 0.3.4 pulls in `langchain-text-splitters`, so Voyage is called over `httpx`.
 
 **Pre-commit**: ruff, ruff-format, gitleaks.
 

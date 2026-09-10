@@ -1,6 +1,15 @@
+"""Shared with surrogate-model-service; adapted: code-qa error types and a catch-all 500."""
+
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+
+from app.logging_setup import get_logger
+
+log = get_logger(__name__)
+
+
+# ── Errors ────────────────────────────────────────────────────────────────────
 
 
 class ServiceError(Exception):
@@ -15,12 +24,12 @@ class ServiceError(Exception):
         super().__init__(self.message)
 
 
-class ModelNotFoundError(ServiceError):
-    """Raised when a requested model ID does not exist in the store."""
+class RepoNotFoundError(ServiceError):
+    """Raised when a requested repository has not been indexed."""
 
-    code = "model_not_found"
+    code = "repo_not_found"
     status_code = 404
-    default_message = "Model not found."
+    default_message = "Repository not found."
 
 
 class JobNotFoundError(ServiceError):
@@ -31,20 +40,47 @@ class JobNotFoundError(ServiceError):
     default_message = "Job not found."
 
 
-class InvalidDatasetError(ServiceError):
-    """Raised when the supplied features/targets fail shape validation."""
+class RepoTooLargeError(ServiceError):
+    """Raised when a repository exceeds the configured size or file-count limits."""
 
-    code = "invalid_dataset"
+    code = "repo_too_large"
+    status_code = 413
+    default_message = "Repository exceeds the size limit."
+
+
+class CloneFailedError(ServiceError):
+    """Raised when cloning the repository from GitHub fails."""
+
+    code = "clone_failed"
+    status_code = 502
+    default_message = "Cloning the repository failed."
+
+
+class InvalidRepoUrlError(ServiceError):
+    """Raised when a repository URL or branch fails validation."""
+
+    code = "invalid_repo_url"
     status_code = 422
-    default_message = "Invalid dataset."
+    default_message = "Invalid GitHub repository URL."
 
 
-class TrainingFailedError(ServiceError):
-    """Raised when model training fails for an unexpected reason."""
+class TooManyJobsError(ServiceError):
+    """Raised when the per-repo or global running-job limit is reached."""
 
-    code = "training_failed"
-    status_code = 500
-    default_message = "Model training failed."
+    code = "too_many_jobs"
+    status_code = 429
+    default_message = "Too many indexing jobs are running; try again later."
+
+
+class ProviderError(ServiceError):
+    """Raised when an embedding or LLM provider call fails."""
+
+    code = "provider_error"
+    status_code = 502
+    default_message = "An upstream model provider failed."
+
+
+# ── Handlers ──────────────────────────────────────────────────────────────────
 
 
 async def service_error_handler(request: Request, exc: ServiceError) -> JSONResponse:
@@ -62,4 +98,13 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
     return JSONResponse(
         status_code=422,
         content={"detail": detail, "code": "validation_error"},
+    )
+
+
+async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Log an unexpected exception by type only and return a generic 500."""
+    log.error("request_failed", error_type=type(exc).__name__, path=request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal error.", "code": "internal_error"},
     )

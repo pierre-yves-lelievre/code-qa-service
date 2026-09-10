@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Request
 
 from app.config import settings
-from app.schemas import HealthResponse
+from app.schemas import ErrorResponse, HealthResponse
 
 router = APIRouter()
 
@@ -25,7 +25,15 @@ router = APIRouter()
                     "example": {"status": "ok", "version": "0.1.0", "uptime_seconds": 42.0}
                 }
             }
-        }
+        },
+        500: {
+            "model": ErrorResponse,
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Internal error.", "code": "internal_error"}
+                }
+            },
+        },
     },
 )
 def health(request: Request) -> HealthResponse:

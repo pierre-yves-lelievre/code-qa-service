@@ -5,6 +5,13 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class ErrorResponse(BaseModel):
+    """Every error response: a human-readable detail and a stable machine code."""
+
+    detail: str = Field(..., json_schema_extra={"example": "Job not found."})
+    code: str = Field(..., json_schema_extra={"example": "job_not_found"})
+
+
 class HealthResponse(BaseModel):
     """Service health: status, version, and uptime."""
 

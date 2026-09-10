@@ -1,3 +1,5 @@
+"""Shared with surrogate-model-service; unchanged."""
+
 import logging
 from contextvars import ContextVar
 
