@@ -12,15 +12,17 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from app.answering import FLOOR_NOTE, NO_CITATIONS_NOTE, NOT_FOUND
 from app.chunking import Chunk, chunk_file, estimate_tokens
 from app.config import Settings, settings
 from app.db import DatabaseStatus
 from app.embeddings import EMBED_BATCH_TOKENS, Embedded, FakeEmbeddings, VoyageEmbeddings
 from app.errors import ProviderError
 from app.jobs import INTERRUPTED_MESSAGE, JobStore
-from app.llm import FakeLLM
+from app.llm import Citation, Completion, FakeLLM, Usage
 from app.main import app
 from app.parsing import file_symbols, language_for
+from app.retrieval import Retrieval
 from app.store import ChunkStore
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -535,3 +537,186 @@ def test_real_providers_without_keys_fails_at_startup():
             voyage_api_key="",
             anthropic_api_key=None,
         )
+
+
+# ── Ask ───────────────────────────────────────────────────────────────────────
+
+TAX_QUESTION = "Where is tax_rate defined?"
+
+
+def _ask(client, repo_id: int, question: str, conversation_id: str | None = None, **headers):
+    """POST /ask for one question, optionally continuing a conversation."""
+    body: dict = {"repo_id": repo_id, "question": question}
+    if conversation_id:
+        body["conversation_id"] = conversation_id
+    return client.post("/ask", json=body, headers=headers)
+
+
+def _indexed_py_app(client, mock_github, fixture_repo) -> tuple[int, str]:
+    """Index the py_app fixture; its repo id and commit sha."""
+    repo = fixture_repo("py_app")
+    job = _index(client, mock_github, repo)
+    assert job["status"] == "succeeded"
+    return job["repo_id"], repo.head()
+
+
+def _kinds(llm: FakeLLM) -> list[str]:
+    """The kinds of the calls the fake received, in order."""
+    return [r["kind"] for r in llm.requests]
+
+
+def test_ask_answers_with_cited_sources_server_links_tokens_and_a_logged_query(
+    client, committed, mock_github, mock_llm, fixture_repo
+):
+    repo_id, sha = _indexed_py_app(client, mock_github, fixture_repo)
+    llm = mock_llm(FakeLLM())  # installed after indexing: the summary call is not counted
+    r = client.post(
+        "/ask", json={"repo_id": repo_id, "question": TAX_QUESTION}, headers={"X-Request-ID": "q-1"}
+    )
+    assert r.status_code == 200, r.json()
+    assert r.headers["X-Request-ID"] == "q-1"
+    body = r.json()
+    assert body["not_found"] is False and body["notes"] == []
+    (source,) = body["sources"]
+    lines = f"#L{source['start_line']}-L{source['end_line']}"
+    assert source["github_url"] == f"{REPO_URL}/blob/{sha}/{source['path']}{lines}"
+    assert source["excerpt"] and source["tier"] in ("symbol", "fts", "vector")
+    assert body["retrievers"]["symbol"]["status"] == "ok"
+    assert body["retrievers"]["planner"] == "ok"
+    assert body["snapshot"]["commit_sha"] == sha
+    assert set(body["timings"]) == {"plan_ms", "embed_ms", "retrieve_ms", "llm_ms", "total_ms"}
+
+    planner, answer = llm.requests
+    assert _kinds(llm) == ["structured", "complete"]
+    assert (answer["max_tokens"], answer["timeout"]) == (1500, settings.answer_timeout_s)
+    assert answer["system"][1]["text"].startswith(f"Repository octo/py_app at commit {sha}.")
+    assert "A fake summary of the repository." in answer["system"][1]["text"]
+    plan_reply = {"query": TAX_QUESTION, "identifiers": [], "intent": "explain"}
+    inputs = [estimate_tokens(json.dumps([q["system"], q["messages"]])) for q in llm.requests]
+    outputs = [estimate_tokens(json.dumps(plan_reply)), estimate_tokens(body["answer"])]
+    assert body["tokens"] == {
+        "input": sum(inputs),
+        "output": sum(outputs),
+        "cache_read": 0,
+        "cache_write": 0,
+    }
+    ((request_id, conversation, question, logged, not_found, tokens, sources),) = _rows(
+        "SELECT request_id, conversation_id::text, question, answer, not_found, tokens, sources"
+        " FROM queries"
+    )
+    assert (request_id, conversation, question, logged, not_found) == (
+        "q-1",
+        body["conversation_id"],
+        TAX_QUESTION,
+        body["answer"],
+        False,
+    )
+    assert tokens["embed"] > 0 and tokens["input"] == body["tokens"]["input"]
+    assert sources[0]["commit_sha"] == sha and sources[0]["blocks"]
+
+
+def test_a_citation_to_a_source_that_was_not_briefed_is_dropped_and_noted(
+    client, committed, mock_github, mock_llm, fixture_repo
+):
+    repo_id, _ = _indexed_py_app(client, mock_github, fixture_repo)
+    stray = Citation(99, "nowhere.py:1-2", None, "x", 0, 1)
+    mock_llm(FakeLLM(completions=[Completion("It is in tax.py.", (stray,), Usage(10, 5))]))
+    body = _ask(client, repo_id, TAX_QUESTION).json()
+    assert body["sources"] == []
+    assert body["notes"] == [
+        "1 citation was dropped: not a source that was provided.",
+        NO_CITATIONS_NOTE,
+    ]
+
+
+def test_a_question_the_floor_rejects_is_not_found_and_the_request_says_so(
+    client, committed, mock_github, mock_llm, fixture_repo
+):
+    repo_id, _ = _indexed_py_app(client, mock_github, fixture_repo)
+    llm = mock_llm(FakeLLM())
+    body = _ask(client, repo_id, "Where is the Stripe integration?").json()
+    assert body["not_found"] is True
+    answer = llm.requests[-1]
+    assert {"type": "text", "text": FLOOR_NOTE} in answer["messages"][-1]["content"]
+
+
+def test_with_nothing_retrieved_no_answer_call_is_made(
+    client, committed, mock_github, mock_llm, fixture_repo, monkeypatch: pytest.MonkeyPatch
+):
+    repo_id, _ = _indexed_py_app(client, mock_github, fixture_repo)
+    empty = {"status": "empty", "hits": 0, "ms": 0}
+    nothing = Retrieval([], [], True, {"symbol": empty, "fts": empty, "vector": empty}, (), 0)
+    monkeypatch.setattr("app.answering.retrieve", lambda *args: nothing)
+    llm = mock_llm(FakeLLM())
+    body = _ask(client, repo_id, TAX_QUESTION).json()
+    assert _kinds(llm) == ["structured"]
+    assert (body["answer"], body["not_found"], body["sources"]) == (f"{NOT_FOUND}.", True, [])
+    assert body["timings"]["llm_ms"] == 0
+    assert _rows("SELECT answer, not_found FROM queries") == [(f"{NOT_FOUND}.", True)]
+
+
+def test_a_second_turn_replays_the_first_with_its_sources_under_a_cache_breakpoint(
+    client, committed, mock_github, mock_llm, fixture_repo
+):
+    repo_id, _ = _indexed_py_app(client, mock_github, fixture_repo)
+    llm = mock_llm(FakeLLM())
+    first = _ask(client, repo_id, TAX_QUESTION).json()
+    second = _ask(client, repo_id, "and what calls it?", first["conversation_id"]).json()
+    assert second["conversation_id"] == first["conversation_id"]
+    _, answer1, planner2, answer2 = llm.requests
+    assert planner2["messages"] == [
+        {"role": "user", "content": TAX_QUESTION},
+        {"role": "assistant", "content": first["answer"]},
+        {"role": "user", "content": "and what calls it?"},
+    ]
+    cited = next(b for b in answer1["messages"][-1]["content"] if b["type"] == "search_result")
+    replayed_user, replayed_answer = answer2["messages"][:2]
+    assert replayed_user == {
+        "role": "user",
+        "content": [{"type": "text", "text": TAX_QUESTION}, cited],
+    }
+    assert replayed_answer == {
+        "role": "assistant",
+        "content": [
+            {"type": "text", "text": first["answer"], "cache_control": {"type": "ephemeral"}}
+        ],
+    }
+    assert answer2["system"] == answer1["system"]
+    assert second["sources"]  # cited at an index offset by the replayed source
+
+    other = _ask(client, repo_id, "and what calls it?").json()
+    assert other["conversation_id"] != first["conversation_id"]
+    assert len(llm.requests[-1]["messages"]) == 1  # a new conversation has no history
+
+
+def test_history_is_capped_at_four_turns(client, committed, mock_github, mock_llm, fixture_repo):
+    repo_id, _ = _indexed_py_app(client, mock_github, fixture_repo)
+    llm = mock_llm(FakeLLM())
+    conversation = None
+    for n in range(6):
+        body = _ask(client, repo_id, f"{TAX_QUESTION} ({n})", conversation).json()
+        conversation = body["conversation_id"]
+    answer = llm.requests[-1]
+    assert len(answer["messages"]) == 4 * 2 + 1
+    assert answer["messages"][0]["content"][0]["text"] == f"{TAX_QUESTION} (1)"
+
+
+def test_ask_errors_are_typed(client, committed):
+    assert _error(_ask(client, 999999, "x")) == (404, "repo_not_found")
+    repo_id = ChunkStore().upsert_repo("octo", "fresh", "https://github.com/octo/fresh")
+    assert _error(_ask(client, repo_id, "x")) == (409, "repo_not_indexed")
+    assert _error(_ask(client, repo_id, "   ")) == (422, "validation_error")
+
+
+def test_a_failed_answer_call_is_502_and_logged_without_an_answer(
+    client, committed, mock_github, mock_llm, fixture_repo
+):
+    repo_id, _ = _indexed_py_app(client, mock_github, fixture_repo)
+    down = ProviderError("Claude timed out or is unreachable.")
+    mock_llm(FakeLLM(completions=[down]))
+    r = _ask(client, repo_id, TAX_QUESTION)
+    assert _error(r) == (502, "provider_error")
+    assert r.json()["detail"] == "Claude timed out or is unreachable."
+    assert _rows("SELECT answer, not_found FROM queries") == [(None, False)]
+    # a failed turn is not history: the next turn in a new conversation sees none
+    assert _ask(client, repo_id, TAX_QUESTION).status_code == 200
