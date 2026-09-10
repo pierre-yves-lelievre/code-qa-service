@@ -136,6 +136,14 @@ class ProviderError(ServiceError):
     default_message = "An upstream model provider failed."
 
 
+class WebNotBuiltError(ServiceError):
+    """Raised when the page is requested but app/static holds no build."""
+
+    code = "web_not_built"
+    status_code = 404
+    default_message = "The web UI is not built; run `make web`."
+
+
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
 

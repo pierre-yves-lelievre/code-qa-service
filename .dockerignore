@@ -21,6 +21,9 @@ data/
 .claude/
 evals/
 web/node_modules/
+web/dist/
+# Built inside the image by the web stage
+app/static/
 
 # Secrets / local config
 .env

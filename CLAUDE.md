@@ -48,7 +48,9 @@ app/
 ├── answering.py      # briefing (two-tier), cached history, Claude call, citations, validity check
 ├── summary.py        # one Claude call per index run: repo summary + suggested questions
 └── indexing.py       # _run_index(): clone -> parse -> chunk -> embed -> summary -> activate
-web/                  # Vite + React + Tailwind, built into app/static (never committed)
+web/                  # Vite + React + Tailwind + TypeScript, built into app/static (never committed)
+├── src/api.ts        #   fetch wrapper ({detail, code} -> ApiError) and types mirroring schemas.py
+└── src/components/   #   RepoSearch, IndexProgress, Chat, Sources, Trace; one file each
 evals/                # golden.json, run_evals.py
 tests/                # conftest.py, test_parsing.py, test_chunking.py, test_retrieval.py,
                       # test_store.py, test_jobs.py, test_db.py, test_github.py,

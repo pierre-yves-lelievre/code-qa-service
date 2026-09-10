@@ -590,6 +590,36 @@ from `{detail, code}`.
 **Done when**: the demo repo can be searched, indexed, and questioned from a clean
 `docker compose up --build`.
 
+**Decisions**
+- *Dependencies* (exact pins, `web/package-lock.json` committed):
+  - `react`, `react-dom` and `react-markdown` at runtime;
+  - `vite`, `@vitejs/plugin-react`, `tailwindcss` with `@tailwindcss/vite` (no PostCSS
+    config), `typescript`, `@types/react` and `@types/react-dom` for the build.
+  - There's no ESLint, Prettier, component library, router, state or fetch library, or JS test
+    runner.
+- *Types*: `web/src/api.ts` mirrors `schemas.py` by hand. `stats` and `progress` get interfaces
+  with the keys `indexing.py` writes. `npm run build` is `tsc --noEmit && vite build`.
+- *Serving*:
+  - `make web` builds into `app/static`.
+  - `SpaStaticFiles` is mounted at `/` after the routes, and an unknown path gets `index.html`.
+  - A missing build answers 404 `web_not_built`, per request, not at startup.
+  - The Vite dev server proxies the API routes, so the page stays same-origin with no CORS.
+- *Markdown*:
+  - Only answers are rendered as markdown, through `react-markdown` with `skipHtml` and an
+    `allowedElements` allowlist, with `unwrapDisallowed`.
+  - An `img` is dropped, and a model's link becomes its text.
+  - The only anchors are server-built: each source's `github_url` and the repo's `url`.
+- *State*:
+  - `?repo=<id>` is set when an index succeeds, and a reload restores the page from
+    `GET /repos/{id}`, so there is no list route.
+  - The job is polled every 1.5 s until it succeeds or fails.
+  - `conversation_id` and every turn live in `Chat` state. The four-turn window is the server's
+    replay concern only, and "New chat" drops both.
+- *Errors*: `ApiError` carries `{detail, code}`, shown inline as "detail (code)". A network
+  failure is `network_error`.
+- *Image*: a first stage, `node:24.13.0-slim`, runs `npm ci` and `npm run build`. The runtime
+  copies `app/static` from it.
+
 **Commits**
 1. `feat: web scaffold and static mount`
 2. `feat: repo search and index progress`

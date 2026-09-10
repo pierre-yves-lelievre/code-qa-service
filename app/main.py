@@ -3,10 +3,15 @@
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException
+from starlette.responses import Response
+from starlette.types import Scope
 
 from app.api import router
 from app.config import settings
@@ -14,6 +19,7 @@ from app.db import check_database, close_pool, get_pool, run_migrations
 from app.embeddings import FakeEmbeddings, VoyageEmbeddings
 from app.errors import (
     ServiceError,
+    WebNotBuiltError,
     service_error_handler,
     unhandled_error_handler,
     validation_error_handler,
@@ -45,6 +51,30 @@ def build_clients() -> tuple[GitHubClient, VoyageEmbeddings | FakeEmbeddings, Cl
     else:
         llm = FakeLLM()
     return github, embeddings, llm
+
+
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+class SpaStaticFiles(StaticFiles):
+    """The page built by `make web`: an unknown path gets index.html, a missing build a 404."""
+
+    async def check_config(self) -> None:
+        """Skip the startup directory check; a missing build is reported per request instead."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        """The file at `path`, else index.html so the page handles its own URL."""
+        try:
+            return await super().get_response(path, scope)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+        try:
+            return await super().get_response("index.html", scope)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                raise WebNotBuiltError() from None
+            raise
 
 
 @asynccontextmanager
@@ -100,6 +130,10 @@ async def request_id_middleware(request: Request, call_next):
 
 
 app.include_router(router)
+
+# Mounted last, so every API route and /docs match first; same origin, so no CORS.
+web = SpaStaticFiles(directory=STATIC_DIR, html=True, check_dir=False)
+app.mount("/", web, name="web")
 
 
 def main():

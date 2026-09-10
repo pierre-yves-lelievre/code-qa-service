@@ -750,3 +750,46 @@ def test_a_failed_answer_call_is_502_and_logged_without_an_answer(
     assert _rows("SELECT answer, not_found FROM queries") == [(None, False)]
     # a failed turn is not history: the next turn in a new conversation sees none
     assert _ask(client, repo_id, TAX_QUESTION).status_code == 200
+
+
+# ── Web page ──────────────────────────────────────────────────────────────────
+
+PAGE = "<div id=root></div>"
+
+
+@pytest.fixture
+def built_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A stand-in for the `make web` output, served in place of app/static."""
+    static = tmp_path / "static"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text(PAGE)
+    (static / "assets" / "app.js").write_text("console.log(1)")
+    (tmp_path / "secret.txt").write_text("outside the build")
+    monkeypatch.setattr("app.main.web.all_directories", [static])
+    return static
+
+
+def test_the_page_is_served_at_the_root_and_for_any_unknown_path(client, built_page):
+    for path in ("/", "/?repo=1", "/some/deep/link"):
+        r = client.get(path)
+        assert (r.status_code, r.text) == (200, PAGE)
+        assert r.headers["content-type"].startswith("text/html")
+    assert client.get("/assets/app.js").text == "console.log(1)"
+
+
+def test_api_routes_and_the_docs_match_before_the_page(client, committed, built_page):
+    assert client.get("/health").headers["content-type"] == "application/json"
+    assert _error(client.get("/repos/999999")) == (404, "repo_not_found")
+    assert _error(client.get(f"/index/{uuid.uuid4()}")) == (404, "job_not_found")
+    assert "paths" in client.get("/openapi.json").json()
+
+
+def test_a_path_escaping_the_build_gets_the_page_and_never_the_file(client, built_page):
+    assert client.get("/%2E%2E/secret.txt").text == PAGE
+
+
+def test_without_a_build_the_root_is_404_web_not_built(client, tmp_path, monkeypatch):
+    monkeypatch.setattr("app.main.web.all_directories", [tmp_path / "missing"])
+    r = client.get("/")
+    assert _error(r) == (404, "web_not_built")
+    assert "make web" in r.json()["detail"]

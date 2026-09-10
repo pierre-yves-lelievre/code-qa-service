@@ -1,4 +1,4 @@
-.PHONY: install db run test lint format audit check eval
+.PHONY: install db run test lint format audit check eval web
 
 install:
 	uv sync --all-groups
@@ -31,3 +31,7 @@ check: lint
 # Spends money with PROVIDERS=real; `make eval ARGS=--reindex` forces a re-index.
 eval:
 	uv run python -m evals.run_evals $(ARGS)
+
+# Type-checks and builds the page into app/static, which the app serves at /.
+web:
+	cd web && npm ci && npm run build
