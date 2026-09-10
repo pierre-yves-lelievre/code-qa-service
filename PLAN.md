@@ -358,6 +358,43 @@ below `settings.relevance_floor`, the result is `no_relevant_sources=True`.
 therefore assert the mechanics, not the semantics: a chunk's exact text used as the query returns
 that chunk first. Semantic quality is measured only by `make eval` with real keys.
 
+**Decisions** (agreed in the Phase 6 plan):
+- *LLM client*: `app/llm.py`.
+  - `ClaudeLLM` is a thin wrapper over the SDK: `max_retries=0`, a per-call timeout, a
+    JSON-schema `output_config`, and every failure as a `ProviderError`.
+  - `structured()` returns `Structured(data, usage)`, so `/ask` can report planner tokens.
+  - `FakeLLM` has the same methods: it plays scripted replies, then a canned plan whose query is
+    the question, and it records each request.
+  - The SDK runs on httpx2, which is locked as its dependency, so tests use
+    `httpx2.MockTransport`.
+- *Planner*:
+  - The prompt asks for keywords and identifiers without filler words.
+  - The history is the last 4 turns as user and assistant messages, with the question last.
+  - `planner_timeout_s = 3`.
+  - The reply is validated by hand, and any failure falls back. A validation failure keeps the
+    usage it spent.
+- *Membership*:
+  - Candidates are the planner's identifiers, then the query's tokens with the punctuation
+    trimmed from their ends, each followed by its dotted parts. There are at most 32, and
+    matching is case-sensitive.
+  - A member is a `name`, a `qualname`, or a dotted `qualname` suffix. The suffix is compared
+    with `right()`, because `LIKE` would treat `_` as a wildcard.
+- *Legs*:
+  - Symbol: at most 50, each member at its first rung.
+  - Full text: at most 50. AND via `plainto_tsquery` runs first, falling back to OR over
+    alphanumeric terms (`or_fallback` in the trace).
+  - Vector: at most 20, with `hnsw.iterative_scan = strict_order`, because the HNSW index spans
+    every snapshot.
+  - Each leg traces `{status, hits, ms}`. The status is ok, or_fallback, empty, skipped (no
+    member) or unavailable.
+- *Fusion*:
+  - `tier` is the leg where the chunk ranked best. Ties go symbol > fts > vector, and the same
+    order breaks ties between equal scores.
+  - `collapse_parts` groups by `(path, kind, qualname)`, or by `(path, kind, name)` for README
+    sections and manifests. Unnamed windows never merge.
+- *Floor*: only AND full-text hits count. The hits are kept, and Phase 7 decides what the model
+  sees.
+
 **Tests**: planner rewrites a follow-up into a standalone query (`FakeLLM`); planner failure falls
 back to the raw question; identifiers resolved by membership, not pattern; RRF ordering on
 synthetic lists; parts collapse; each query returns the expected fixture chunk (db); vector leg
