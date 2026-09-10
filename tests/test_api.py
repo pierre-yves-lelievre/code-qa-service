@@ -23,6 +23,7 @@ def test_health_reports_db_and_keys(client):
     assert body["providers"] == "fake"
     assert body["database"]["reachable"] is True
     assert body["database"]["vector_available"]
+    assert body["database"]["vector_installed"]
     assert body["keys"] == {"voyage": False, "anthropic": False, "github": False}
     assert r.headers["X-Request-ID"]
 

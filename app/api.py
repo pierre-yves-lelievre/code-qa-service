@@ -17,7 +17,7 @@ _HEALTHY_EXAMPLE = {
     "version": "0.1.0",
     "uptime_seconds": 42.0,
     "providers": "fake",
-    "database": {"reachable": True, "vector_available": "0.8.0", "vector_installed": None},
+    "database": {"reachable": True, "vector_available": "0.8.0", "vector_installed": "0.8.0"},
     "keys": {"voyage": False, "anthropic": False, "github": False},
 }
 _DEGRADED_EXAMPLE = {
@@ -38,7 +38,7 @@ _DEGRADED_EXAMPLE = {
         "Reports database reachability, the pgvector extension's available and installed "
         "versions, the provider mode, and which API keys are configured (presence only; no "
         "provider is called). HTTP 200 when the database is reachable and pgvector is "
-        "available, 503 otherwise."
+        "installed, 503 otherwise."
     ),
     responses={
         200: {"content": {"application/json": {"example": _HEALTHY_EXAMPLE}}},
@@ -59,7 +59,7 @@ _DEGRADED_EXAMPLE = {
 def health(request: Request) -> JSONResponse:
     """Report service status, database and pgvector state, and configured keys."""
     db = check_database()
-    healthy = db.reachable and db.vector_available is not None
+    healthy = db.reachable and db.vector_installed is not None
     body = HealthResponse(
         status="ok" if healthy else "degraded",
         version=settings.app_version,

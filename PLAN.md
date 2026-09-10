@@ -58,11 +58,14 @@ CI is green with a Postgres service container and a `pip-audit` step.
 
 **Files**: `app/db.py`, `app/migrations/0001_init.sql`, `app/jobs.py`, `tests/test_jobs.py`.
 
-**Schema** (`0001_init.sql`): `repos`, `snapshots`, `files`, `chunks` (with `search_a/b/c` and the
-generated weighted `tsv`), `embeddings` keyed `(content_hash, model)` with `vector(1024)`,
-`index_jobs`, `queries`, `schema_migrations`. Indexes: GIN on `tsv`, btree on
-`(snapshot_id, name)` and `(snapshot_id, qualname)`, HNSW `vector_cosine_ops` on `embeddings`,
-partial unique on `index_jobs(repo_id) WHERE status = 'running'`.
+**Schema** (`0001_init.sql`): `repos`, `snapshots` (with `stats` jsonb), `files` (with `mode`
+`symbols|windows|skipped` and `skip_reason`), `chunks` (with `search_a/b/c` and the generated
+weighted `tsv`), `embeddings` keyed `(content_hash, model)` with `vector(1024)`, `index_jobs`,
+`queries` (with `sources` jsonb and `answer`); `schema_migrations` is created by the runner.
+Indexes: GIN on `tsv`, btree on `(snapshot_id, name)` and `(snapshot_id, qualname)`, unique on
+`chunks(file_id, kind, coalesce(qualname, ''), start_line, part)`, HNSW `vector_cosine_ops` on
+`embeddings`, partial unique on `index_jobs(repo_id) WHERE status IN ('pending', 'running')`
+(pending counts, so a duplicate is rejected at create, before a background task starts).
 
 **`db.py`**: `get_pool()`, `run_migrations()` (applies unapplied numbered files in order, records
 them), `connection()` context manager.
@@ -159,6 +162,7 @@ commit every 50 files with progress → embed (Phase 5) → summary (Phase 7, be
 in one transaction → sweep to last two snapshots. Already-indexed short-circuit when the commit sha
 equals the active snapshot. Any exception: job `failed`, snapshot `failed`, old snapshot untouched.
 Overall job timeout from settings marks the job failed.
+The flip retires the old active snapshot before activating the new one, in the same transaction.
 
 **Routes**: `GET /repos/search?q=`, `POST /index` (202, job id), `GET /index/{job_id}`.
 
