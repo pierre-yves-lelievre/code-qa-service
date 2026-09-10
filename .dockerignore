@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Environments
+.venv/
+.uv/
+
+# Tests
+tests/
+.pytest_cache/
+.coverage
+
+# Runtime artefacts
+models/
+
+# Secrets / local config
+.env
+.env.local
+
+# VCS
+.git/
+.github/
+
+# Docs / misc
+*.md
+LICENSE
+Makefile
+docker-compose.yml
