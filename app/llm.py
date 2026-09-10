@@ -1,4 +1,4 @@
-"""LLM: ClaudeLLM over the Anthropic SDK, and FakeLLM; structured output now, answers in Phase 7."""
+"""LLM: ClaudeLLM over the Anthropic SDK, and FakeLLM; structured output and cited answers."""
 
 import json
 import time
@@ -13,6 +13,8 @@ from app.errors import ProviderError
 from app.logging_setup import get_logger
 
 log = get_logger(__name__)
+
+ANSWER_RETRIES = 1  # one immediate retry on a 5xx; backoff lives only in embeddings.py
 
 
 @dataclass(frozen=True)
@@ -33,11 +35,33 @@ class Structured:
     usage: Usage
 
 
+@dataclass(frozen=True)
+class Citation:
+    """One search-result citation: the result's global index, its source, the blocks cited."""
+
+    search_result_index: int
+    source: str
+    title: str | None
+    cited_text: str
+    start_block: int
+    end_block: int  # exclusive
+
+
+@dataclass(frozen=True)
+class Completion:
+    """An answer: its text, its search-result citations, the tokens used, whether it was cut."""
+
+    text: str
+    citations: tuple[Citation, ...]
+    usage: Usage
+    truncated: bool = False
+
+
 # ── Claude ────────────────────────────────────────────────────────────────────
 
 
 class ClaudeLLM:
-    """Anthropic Messages API: one attempt per call, explicit timeout, errors as ProviderError."""
+    """Anthropic Messages API: explicit timeouts, no SDK retries, errors as ProviderError."""
 
     def __init__(self, api_key: str, model: str, *, transport: Any = None) -> None:
         """Build the SDK client without its own retries; tests pass an httpx2 MockTransport."""
@@ -54,33 +78,73 @@ class ClaudeLLM:
         timeout: float,
     ) -> Structured:
         """One call constrained to a JSON schema; returns the parsed object (no sampling knobs)."""
-        started = time.monotonic()
-        try:
-            message = self._client.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                system=system,
-                messages=messages,  # type: ignore[arg-type]
-                output_config={"format": {"type": "json_schema", "schema": schema}},
-                timeout=timeout,
-            )
-        except anthropic.APIStatusError as exc:
-            log.warning("llm_call_failed", kind="structured", status=exc.status_code)
-            raise ProviderError(f"Claude rejected the request (HTTP {exc.status_code}).") from None
-        except anthropic.APIError as exc:  # timeouts and connection errors
-            log.warning("llm_call_failed", kind="structured", error_type=type(exc).__name__)
-            raise ProviderError("Claude timed out or is unreachable.") from None
-        usage = _usage(message.usage)
-        log.info(
-            "llm_call_done",
-            kind="structured",
-            input_tokens=usage.input,
-            output_tokens=usage.output,
-            stop_reason=message.stop_reason,
-            ms=round((time.monotonic() - started) * 1000),
+        message, usage = self._create(
+            "structured",
+            0,
+            max_tokens=max_tokens,
+            system=system,
+            messages=messages,
+            output_config={"format": {"type": "json_schema", "schema": schema}},
+            timeout=timeout,
         )
         text = "".join(block.text for block in message.content if block.type == "text")
         return Structured(_json_object(text, message.stop_reason), usage)
+
+    def complete(
+        self,
+        system: list[dict[str, Any]],
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        timeout: float,
+    ) -> Completion:
+        """One answer call over search-result blocks; a 5xx is retried once, immediately."""
+        message, usage = self._create(
+            "complete",
+            ANSWER_RETRIES,
+            max_tokens=max_tokens,
+            system=system,
+            messages=messages,
+            timeout=timeout,
+        )
+        if message.stop_reason not in ("end_turn", "max_tokens"):
+            raise ProviderError("Claude returned a malformed response.")
+        return _completion(message.content, usage, message.stop_reason == "max_tokens")
+
+    def _create(
+        self, kind: str, retries: int, **request: Any
+    ) -> tuple[anthropic.types.Message, Usage]:
+        """Send one request, retrying a 5xx up to `retries` times; log shapes, never content."""
+        started = time.monotonic()
+        attempt = 0
+        while True:
+            try:
+                message = self._client.messages.create(model=self.model, **request)
+            except anthropic.APIStatusError as exc:
+                if exc.status_code >= 500 and attempt < retries:
+                    attempt += 1
+                    log.warning("llm_call_retried", kind=kind, status=exc.status_code)
+                    continue
+                log.warning("llm_call_failed", kind=kind, status=exc.status_code)
+                raise ProviderError(
+                    f"Claude rejected the request (HTTP {exc.status_code})."
+                ) from None
+            except anthropic.APIError as exc:  # timeouts and connection errors
+                log.warning("llm_call_failed", kind=kind, error_type=type(exc).__name__)
+                raise ProviderError("Claude timed out or is unreachable.") from None
+            break
+        usage = _usage(message.usage)
+        log.info(
+            "llm_call_done",
+            kind=kind,
+            input_tokens=usage.input,
+            output_tokens=usage.output,
+            cache_read_tokens=usage.cache_read,
+            cache_write_tokens=usage.cache_write,
+            stop_reason=message.stop_reason,
+            attempts=attempt + 1,
+            ms=round((time.monotonic() - started) * 1000),
+        )
+        return message, usage
 
     def close(self) -> None:
         """Close the SDK client."""
@@ -108,17 +172,50 @@ def _json_object(text: str, stop_reason: str | None) -> dict[str, Any]:
     return data
 
 
+def _completion(content: Sequence[Any], usage: Usage, truncated: bool) -> Completion:
+    """The text blocks joined, with their search-result citations; other kinds are counted."""
+    text: list[str] = []
+    citations: list[Citation] = []
+    ignored = 0
+    for block in content:
+        if block.type != "text":
+            continue
+        text.append(block.text)
+        for cited in block.citations or []:
+            if cited.type != "search_result_location":
+                ignored += 1
+                continue
+            citations.append(
+                Citation(
+                    search_result_index=cited.search_result_index,
+                    source=cited.source,
+                    title=cited.title,
+                    cited_text=cited.cited_text,
+                    start_block=cited.start_block_index,
+                    end_block=cited.end_block_index,
+                )
+            )
+    if ignored:
+        log.info("llm_citations_ignored", count=ignored)
+    return Completion("".join(text), tuple(citations), usage, truncated)
+
+
 # ── Fake ──────────────────────────────────────────────────────────────────────
 
 
 class FakeLLM:
-    """Test and dev double: scripted replies in order, then a canned plan; records each request."""
+    """Test and dev double: scripted replies in order, then canned ones; records each request."""
 
     model = "fake"
 
-    def __init__(self, replies: Sequence[dict[str, Any] | Exception] = ()) -> None:
+    def __init__(
+        self,
+        replies: Sequence[dict[str, Any] | Exception] = (),
+        completions: Sequence[Completion | Exception] = (),
+    ) -> None:
         """Keep the scripted replies; an exception among them is raised when its turn comes."""
         self._replies = list(replies)
+        self._completions = list(completions)
         self.requests: list[dict[str, Any]] = []
 
     def structured(
@@ -131,6 +228,7 @@ class FakeLLM:
     ) -> Structured:
         """The next scripted reply, else a plan whose query is the last user message."""
         request = {
+            "kind": "structured",
             "system": system,
             "messages": messages,
             "schema": schema,
@@ -150,5 +248,49 @@ class FakeLLM:
         )
         return Structured(reply, usage)
 
+    def complete(
+        self,
+        system: list[dict[str, Any]],
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        timeout: float,
+    ) -> Completion:
+        """The next scripted completion, else one citing the first search result of this turn."""
+        request = {
+            "kind": "complete",
+            "system": system,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "timeout": timeout,
+        }
+        self.requests.append(request)
+        if self._completions:
+            completion = self._completions.pop(0)
+            if isinstance(completion, Exception):
+                raise completion
+            return completion
+        earlier = sum(len(_search_results(m)) for m in messages[:-1])
+        current = _search_results(messages[-1])
+        if current:
+            first = current[0]
+            text = f"See {first['title']}."
+            citations = (
+                Citation(
+                    earlier, first["source"], first["title"], first["content"][0]["text"], 0, 1
+                ),
+            )
+        else:
+            text, citations = "Not found in the indexed code.", ()
+        usage = Usage(
+            input=estimate_tokens(json.dumps([system, messages])), output=estimate_tokens(text)
+        )
+        return Completion(text, citations, usage)
+
     def close(self) -> None:
         """Nothing to close."""
+
+
+def _search_results(message: dict[str, Any]) -> list[dict[str, Any]]:
+    """The search-result blocks of one message."""
+    content = message["content"]
+    return [b for b in content if b["type"] == "search_result"] if isinstance(content, list) else []

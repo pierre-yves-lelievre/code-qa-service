@@ -1,4 +1,4 @@
-"""ClaudeLLM: the structured-output request contract and its errors, over a MockTransport."""
+"""ClaudeLLM: structured and answer request contracts and their errors, over a MockTransport."""
 
 import json
 
@@ -6,7 +6,7 @@ import httpx2
 import pytest
 
 from app.errors import ProviderError
-from app.llm import ClaudeLLM, Structured, Usage
+from app.llm import Citation, ClaudeLLM, Completion, FakeLLM, Structured, Usage
 
 SCHEMA = {"type": "object", "properties": {"a": {"type": "integer"}}, "required": ["a"]}
 MESSAGES = [{"role": "user", "content": "where is the cart total computed?"}]
@@ -96,3 +96,143 @@ def test_unusable_reply_is_a_provider_error(reply: httpx2.Response):
     llm, _ = _claude(reply)
     with pytest.raises(ProviderError, match="malformed"):
         _call(llm)
+
+
+# ── Answers ───────────────────────────────────────────────────────────────────
+
+SYSTEM = [
+    {"type": "text", "text": "Answer from the sources."},
+    {"type": "text", "text": "Repository octo/shop.", "cache_control": {"type": "ephemeral"}},
+]
+RESULT = {
+    "type": "search_result",
+    "source": "shop/cart.py:1-10",
+    "title": "shop.cart.total",
+    "content": [{"type": "text", "text": "def total(): ..."}],
+    "citations": {"enabled": True},
+}
+ANSWER_MESSAGES = [
+    {"role": "user", "content": [{"type": "text", "text": "where is the total?"}, RESULT]}
+]
+CITED = {
+    "type": "search_result_location",
+    "cited_text": "def total(): ...",
+    "search_result_index": 0,
+    "source": "shop/cart.py:1-10",
+    "title": "shop.cart.total",
+    "start_block_index": 0,
+    "end_block_index": 1,
+}
+ELSEWHERE = {
+    "type": "char_location",
+    "cited_text": "x",
+    "document_index": 0,
+    "document_title": None,
+    "start_char_index": 0,
+    "end_char_index": 1,
+}
+
+
+def _reply(content: list[dict], stop_reason: str = "end_turn") -> httpx2.Response:
+    """A Messages API reply with the given content blocks."""
+    response = _message("", stop_reason)
+    body = json.loads(response.content) | {"content": content}
+    return httpx2.Response(200, json=body)
+
+
+ANSWER = _reply(
+    [
+        {"type": "text", "text": "The total is ", "citations": None},
+        {"type": "text", "text": "computed in total()", "citations": [CITED, ELSEWHERE]},
+        {"type": "text", "text": "."},
+    ]
+)
+
+
+def _answer(llm: ClaudeLLM) -> Completion:
+    """One answer call over the test briefing."""
+    return llm.complete(SYSTEM, ANSWER_MESSAGES, max_tokens=1500, timeout=60.0)
+
+
+def test_answer_call_sends_system_blocks_and_search_results_without_sampling_settings():
+    llm, seen = _claude(ANSWER)
+    _answer(llm)
+    (request,) = seen
+    assert json.loads(request.content) == {
+        "model": "claude-sonnet-5",
+        "max_tokens": 1500,
+        "system": SYSTEM,
+        "messages": ANSWER_MESSAGES,
+    }
+
+
+def test_answer_text_is_joined_and_only_search_result_citations_are_kept():
+    llm, _ = _claude(ANSWER)
+    assert _answer(llm) == Completion(
+        text="The total is computed in total().",
+        citations=(Citation(0, "shop/cart.py:1-10", "shop.cart.total", "def total(): ...", 0, 1),),
+        usage=Usage(input=50, output=20, cache_read=3),
+    )
+
+
+@pytest.mark.parametrize("status", [500, 529])
+def test_a_server_error_is_retried_once(status: int):
+    llm, seen = _claude(httpx2.Response(status, json={"type": "error"}), ANSWER)
+    assert _answer(llm).text == "The total is computed in total()."
+    assert len(seen) == 2
+
+
+def test_a_second_server_error_is_a_provider_error():
+    llm, seen = _claude(httpx2.Response(500, json={"type": "error"}))
+    with pytest.raises(ProviderError, match="HTTP 500"):
+        _answer(llm)
+    assert len(seen) == 2
+
+
+@pytest.mark.parametrize(
+    "reply", [httpx2.Response(400, json={"type": "error"}), httpx2.ReadTimeout("slow")]
+)
+def test_client_errors_and_timeouts_are_not_retried(reply):
+    llm, seen = _claude(reply)
+    with pytest.raises(ProviderError):
+        _answer(llm)
+    assert len(seen) == 1
+
+
+def test_an_answer_cut_at_max_tokens_is_kept_and_marked_truncated():
+    llm, _ = _claude(_reply([{"type": "text", "text": "The total"}], stop_reason="max_tokens"))
+    completion = _answer(llm)
+    assert (completion.text, completion.truncated) == ("The total", True)
+
+
+def test_a_refused_answer_is_a_provider_error():
+    llm, _ = _claude(_reply([{"type": "text", "text": "No."}], stop_reason="refusal"))
+    with pytest.raises(ProviderError, match="malformed"):
+        _answer(llm)
+
+
+# ── Fake ──────────────────────────────────────────────────────────────────────
+
+
+def test_fake_answer_cites_the_first_search_result_of_this_turn_by_global_index():
+    earlier = {**RESULT, "source": "old.py:1-5"}
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "q1"}, earlier]},
+        {"role": "assistant", "content": [{"type": "text", "text": "a1"}]},
+        *ANSWER_MESSAGES,
+    ]
+    llm = FakeLLM()
+    completion = llm.complete(SYSTEM, messages, max_tokens=1500, timeout=60.0)
+    (citation,) = completion.citations
+    assert (citation.search_result_index, citation.source) == (1, "shop/cart.py:1-10")
+    assert llm.requests[0]["kind"] == "complete"
+
+
+def test_fake_answer_without_sources_is_not_found_and_scripts_come_first():
+    no_sources = [{"role": "user", "content": [{"type": "text", "text": "q"}]}]
+    scripted = Completion("Scripted.", (), Usage())
+    llm = FakeLLM(completions=[scripted, ProviderError("down")])
+    assert llm.complete(SYSTEM, no_sources, 1500, 60.0) is scripted
+    with pytest.raises(ProviderError):
+        llm.complete(SYSTEM, no_sources, 1500, 60.0)
+    assert llm.complete(SYSTEM, no_sources, 1500, 60.0).text == "Not found in the indexed code."
