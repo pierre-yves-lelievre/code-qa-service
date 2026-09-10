@@ -87,14 +87,15 @@ second running job for the same repo raises; third running job overall raises.
 
 ## Phase 2 — Parsing (60 min)
 
-**Files**: `app/parsing.py`, `app/queries/python.scm`, `app/queries/typescript.scm`,
+**Files**: `app/parsing.py`, `app/queries/{python,javascript,typescript}.scm`,
 `tests/fixtures/py_app/`, `tests/fixtures/ts_app/`, `tests/test_parsing.py`.
 
 **Contract**: `file_symbols(path: str, text: str, language: str) -> ParseResult(rows:
 list[SymbolRow], error_nodes: int)`. `SymbolRow(path, kind, name, qualname, start_line, end_line,
-signature, doc)`. Kinds: `module | class | function | method`. `LANGUAGES` maps extension →
-grammar name and query file; `.js/.jsx` use the javascript grammar with the typescript query;
-`.tsx` uses tsx. `error_nodes` counts ERROR and MISSING nodes. There is no per-file parse timeout:
+signature, doc)`. Kinds: `module | class | function | method | type`. `LANGUAGES` maps extension
+→ grammar name and query files; `.js/.jsx` use the javascript grammar with `javascript.scm` (the
+patterns all three grammars share); `.ts` and `.tsx` (tsx grammar) add `typescript.scm`, where
+`abstract class` is a `class` and interface, type alias and enum are `type`. `error_nodes` counts ERROR and MISSING nodes. There is no per-file parse timeout:
 tree-sitter's cancellation (`progress_callback`) segfaults in 0.25 and 0.26 and `parse()` holds
 the GIL, so files are bounded by `max_file_kb` and the Phase 4 job timeout.
 
@@ -109,7 +110,8 @@ preceding `/** */` comment; one `module` row spanning the file.
 **Tests** (unit, no db):
 - Python: class, method, nested function, decorated function includes the decorator line,
   docstring captured, async def is a function.
-- TypeScript: function declaration, class + method, arrow function assigned to const, JSDoc doc.
+- TypeScript: function declaration, class + method, arrow function assigned to const, JSDoc doc;
+  abstract class is a `class`, interface / type alias / enum are `type`.
 - A file with a syntax error still yields the symbols outside the error region and reports
   `error_nodes > 0`.
 
@@ -130,7 +132,8 @@ list[Chunk]`. `Chunk(path, kind, name, qualname, part, start_line, end_line, sig
 content_hash, tokens)`.
 
 **Rules**: header line `repo/path :: qualname (kind)`; function/method = header + signature + doc +
-full body; class = header + doc + own lines (child spans subtracted) + child signatures; module =
+full body; class = header + doc + own lines (child spans subtracted) + child signatures, and
+`type` (TS interface, type alias, enum) follows the class rule; module =
 header + doc + uncovered lines; bodies over 1,200 tokens split into overlapping parts (150 overlap)
 via the window function; windows of 80 lines / 15 overlap for non-symbol files; README split by
 heading; `pyproject.toml`, `requirements*.txt`, `package.json` as single `manifest` chunks; hard

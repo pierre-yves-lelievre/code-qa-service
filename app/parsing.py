@@ -13,19 +13,22 @@ from tree_sitter import Language, Node, Parser, Query, QueryCursor
 
 QUERIES_DIR = Path(__file__).parent / "queries"
 
-Kind = Literal["module", "class", "function", "method"]
+Kind = Literal["module", "class", "function", "method", "type"]
 
-# Extension → (grammar name, query file). JavaScript and TSX share the TypeScript query.
-LANGUAGES: dict[str, tuple[str, str]] = {
-    ".py": ("python", "python.scm"),
-    ".ts": ("typescript", "typescript.scm"),
-    ".mts": ("typescript", "typescript.scm"),
-    ".cts": ("typescript", "typescript.scm"),
-    ".tsx": ("tsx", "typescript.scm"),
-    ".js": ("javascript", "typescript.scm"),
-    ".jsx": ("javascript", "typescript.scm"),
-    ".mjs": ("javascript", "typescript.scm"),
-    ".cjs": ("javascript", "typescript.scm"),
+_PY = ("python.scm",)
+_JS = ("javascript.scm",)
+_TS = ("javascript.scm", "typescript.scm")  # the shared patterns plus the TS-only ones
+# Extension → (grammar name, query files, concatenated in order).
+LANGUAGES: dict[str, tuple[str, tuple[str, ...]]] = {
+    ".py": ("python", _PY),
+    ".ts": ("typescript", _TS),
+    ".mts": ("typescript", _TS),
+    ".cts": ("typescript", _TS),
+    ".tsx": ("tsx", _TS),
+    ".js": ("javascript", _JS),
+    ".jsx": ("javascript", _JS),
+    ".mjs": ("javascript", _JS),
+    ".cjs": ("javascript", _JS),
 }
 _GRAMMARS = {
     "python": tree_sitter_python.language,
@@ -85,8 +88,9 @@ def _language(grammar: str) -> Language:
 
 @cache
 def _query(grammar: str) -> Query:
-    """Compile a grammar's definition query, once."""
-    return Query(_language(grammar), (QUERIES_DIR / _QUERY_FILES[grammar]).read_text())
+    """Compile a grammar's definition query from its query files, once."""
+    source = "\n".join((QUERIES_DIR / name).read_text() for name in _QUERY_FILES[grammar])
+    return Query(_language(grammar), source)
 
 
 # ── Parsing ───────────────────────────────────────────────────────────────────
@@ -168,12 +172,12 @@ def _last_line(node: Node) -> int:
 
 
 def _signature(source: bytes, node: Node, body: Node) -> str:
-    """Source from the def/class keyword up to the body, on one line, without a trailing ':'."""
+    """Source from the def/class keyword up to the body, on one line, without a trailing ':'/'='."""
     start = next((c for c in node.children if c.type not in ("decorator", "comment")), node)
     head = source[start.start_byte : body.start_byte].decode("utf-8", errors="replace")
     if node.type == "variable_declarator" and node.parent is not None:
         head = f"{_text(source, node.parent.children[0])} {head}"  # const / let / var
-    return " ".join(head.split()).removesuffix(":").rstrip()
+    return " ".join(head.split()).removesuffix(":").removesuffix(" =").rstrip()
 
 
 def _count_errors(root: Node) -> int:

@@ -173,7 +173,7 @@ def test_jsdoc_heading_the_file_is_the_module_doc_only_when_detached():
     assert [(r.kind, r.doc) for r in attached.rows] == [("module", None), ("function", "Adds.")]
 
 
-def test_tsx_and_js_use_the_typescript_query():
+def test_tsx_and_js_share_the_javascript_patterns():
     tsx = _parse("ts_app", "src/button.tsx")
     assert [(r.kind, r.qualname, r.doc) for r in tsx] == [
         ("module", "src.button", None),
@@ -187,6 +187,25 @@ def test_tsx_and_js_use_the_typescript_query():
         ("class", "src.util.Cache", "class Cache"),
         ("method", "src.util.Cache.get", "get(key)"),
         ("function", "src.util.load", "const load = function ()"),
+    ]
+
+
+def test_abstract_class_is_a_class_and_interface_alias_enum_are_types():
+    rows = _parse("ts_app", "src/types.ts")
+    assert [(r.kind, r.qualname, r.start_line, r.end_line, r.signature, r.doc) for r in rows] == [
+        ("module", "src.types", 1, 21, None, None),
+        ("type", "src.types.HasArea", 2, 4, "interface HasArea", "Something with an area."),
+        (
+            "class",
+            "src.types.Shape",
+            7,
+            13,
+            "abstract class Shape implements HasArea",
+            "A shape.",
+        ),
+        ("method", "src.types.Shape.describe", 10, 12, "describe(): string", None),
+        ("type", "src.types.Id", 16, 16, "type Id<T>", "An identifier."),
+        ("type", "src.types.Color", 18, 21, "enum Color", None),
     ]
 
 

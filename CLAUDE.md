@@ -37,7 +37,7 @@ app/
 ├── jobs.py           # Job dataclass + Postgres JobStore (create/update/get/count_active)
 ├── github.py         # GitHubClient: search(), shallow_clone(); strict URL/branch validation
 ├── parsing.py        # tree-sitter: LANGUAGES table, queries/*.scm, file_symbols() -> rows
-├── queries/          # python.scm, typescript.scm (shared with javascript/tsx)
+├── queries/          # python.scm, javascript.scm (shared by js/ts/tsx), typescript.scm (TS-only)
 ├── chunking.py       # rows -> chunks: symbol rules, windows, parts, content hash
 ├── embeddings.py     # VoyageEmbeddings, FakeEmbeddings; count_tokens, batching, backoff
 ├── store.py          # ChunkStore: upserts, snapshot activate/sweep, 3 retrieval queries
