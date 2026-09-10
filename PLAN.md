@@ -92,7 +92,8 @@ second running job for the same repo raises; third running job overall raises.
 
 **Contract**: `file_symbols(path: str, text: str, language: str) -> ParseResult(rows:
 list[SymbolRow], error_nodes: int)`. `SymbolRow(path, kind, name, qualname, start_line, end_line,
-signature, doc)`. Kinds: `module | class | function | method | type`. `LANGUAGES` maps extension
+signature, doc, doc_start_line)`, where `doc_start_line` is the first line of a JSDoc above the
+definition (None in Python, whose docstring is inside the span). Kinds: `module | class | function | method | type`. `LANGUAGES` maps extension
 → grammar name and query files; `.js/.jsx` use the javascript grammar with `javascript.scm` (the
 patterns all three grammars share); `.ts` and `.tsx` (tsx grammar) add `typescript.scm`, where
 `abstract class` is a `class` and interface, type alias and enum are `type`. `error_nodes` counts ERROR and MISSING nodes. There is no per-file parse timeout:
@@ -129,21 +130,32 @@ preceding `/** */` comment; one `module` row spanning the file.
 
 **Contract**: `chunk_file(path, text, rows) -> list[Chunk]` and `window_file(path, text) ->
 list[Chunk]`. `Chunk(path, kind, name, qualname, part, start_line, end_line, signature, doc, text,
-content_hash, tokens)`.
+content_hash, tokens, truncated, search_a, search_b, search_c)`. Kinds add `window | manifest`.
+Tokens come from one estimator, `estimate_tokens(text) = ceil(len(text.encode()) / 3)` (high for
+code, on purpose; no tokenizer dependency).
 
-**Rules**: header line `repo/path :: qualname (kind)`; function/method = header + signature + doc +
-full body; class = header + doc + own lines (child spans subtracted) + child signatures, and
-`type` (TS interface, type alias, enum) follows the class rule; module =
-header + doc + uncovered lines; bodies over 1,200 tokens split into overlapping parts (150 overlap)
-via the window function; windows of 80 lines / 15 overlap for non-symbol files; README split by
-heading; `pyproject.toml`, `requirements*.txt`, `package.json` as single `manifest` chunks; hard
-cap 4,000 tokens with `truncated=1`. `content_hash = sha256(text)`. `search_a = name + qualname`,
+**Rules**: header line `path :: qualname (kind)` (repo-relative path; `path :: name (kind)` or
+`path (kind)` without a qualname; `, part i/n` inside the parentheses for parts). Function/method =
+header + one-line signature + doc + source lines `start_line..end_line` (decorators included);
+class = header + doc + own lines, each **direct** child's span (from its JSDoc) replaced in place by
+its signature at its indentation, and `type` (TS interface, type alias, enum) follows the class
+rule; module = header + lines outside every top-level definition and its JSDoc, blank runs
+collapsed. The doc prefix is added only when the doc is outside the span (a JSDoc); a Python
+docstring appears once, in the body. A module chunk with no text is dropped. Chunks over 1,200
+tokens split their lines into overlapping parts (150 overlap) via the window function; every part
+repeats the header and signature, the outside doc goes on part 1; `part` is 1..n (0 = unsplit) and
+each part's lines are its own. Windows of 80 lines / 15 overlap for non-symbol files; README
+(`README.md`, `README.markdown`) split by ATX heading, outside code fences, name = heading;
+`pyproject.toml`, `requirements*.txt`, `package.json` as single `manifest` chunks; hard cap 4,000
+tokens with `truncated=1`, cut at a whole line. CRLF is normalised to LF on entry (also in
+`file_symbols`). `content_hash = sha256(text)`, header included. `search_a = name + qualname`,
 `search_b = signature + doc`, `search_c = body`, all passed through `split_identifiers`.
 
 **Tests**: module chunk has imports not bodies; class chunk keeps fields, drops method bodies, lists
-child signatures; nested def appears in parent body and as its own chunk; property getter/setter
-give two chunks with distinct keys; long function splits into parts with expected overlap; CRLF
-equals LF; empty file yields no chunk; identical text in two files shares a hash.
+child signatures, and a decorated first method's decorator line is in the method chunk only;
+nested def appears in parent body and as its own chunk; property getter/setter give two chunks with
+distinct keys; long function splits into parts with expected overlap; CRLF equals LF; empty file
+yields no chunk; an unchanged chunk keeps its hash when another function in the file changes.
 
 **Commits**
 1. `feat: symbol chunk rules and module preamble`
@@ -197,7 +209,8 @@ snapshot; failed job leaves the previous snapshot active; re-index at same sha s
 **Files**: `app/embeddings.py`, wiring in `indexing.py`, `tests/conftest.py`.
 
 **`VoyageEmbeddings(api_key, model, dims)`**: `embed_documents(texts)`, `embed_query(text)`,
-`count_tokens(texts)`; batches by token budget; backoff on 429/5xx (5 tries); `check_key()` called
+batches by token budget (`chunking.estimate_tokens`; actual `usage.total_tokens` from each response
+is recorded); backoff on 429/5xx (5 tries); `check_key()` called
 once at the start of a job. `FakeEmbeddings`: unit-norm vectors seeded from a text hash.
 Index step embeds only hashes without a row for the current model; commits per batch. Before the
 first batch, the job sums the tokens to embed and aborts with `EmbedBudgetExceededError` if the
@@ -237,7 +250,8 @@ snapshot. **Each leg fails independently**: an exception in one leg logs, marks 
 `unavailable` in the trace, and the others proceed.
 
 **Fusion**: `rrf(lists, k=60)`; tier = best leg; `collapse_parts` merges parts into their symbol
-keeping the best score; keep the top 12 as full hits and the next 30 (60 when
+keeping the best score (grouped by `(path, kind, qualname)`, which also merges a property getter and
+setter; accepted); keep the top 12 as full hits and the next 30 (60 when
 `intent == "enumerate"`) as the compact index.
 
 **Relevance floor**: if the symbol and full-text legs returned nothing and the best cosine score is

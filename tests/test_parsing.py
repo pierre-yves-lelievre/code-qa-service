@@ -123,11 +123,15 @@ def test_package_init_module_row_takes_the_package_qualname():
 # ── TypeScript, TSX, JavaScript ───────────────────────────────────────────────
 
 
-def test_typescript_function_declaration_row_with_jsdoc():
+def test_typescript_function_declaration_row_with_jsdoc_and_its_first_line():
     add = _row(_parse("ts_app", "src/service.ts"), "src.service.add")
     assert (add.kind, add.start_line, add.end_line) == ("function", 8, 10)
     assert add.signature == "function add(a: number, b: number): number"
-    assert add.doc == "Adds two numbers."
+    assert (add.doc, add.doc_start_line) == ("Adds two numbers.", 7)
+    service = _row(_parse("ts_app", "src/service.ts"), "src.service.OrderService")
+    assert (service.start_line, service.doc_start_line) == (16, 12)
+    product = _row(_parse("py_app", "shop/models.py"), "shop.models.Product")
+    assert product.doc_start_line is None  # a Python docstring sits inside the span
 
 
 def test_typescript_class_and_method_rows():

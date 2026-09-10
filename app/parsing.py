@@ -52,6 +52,7 @@ class SymbolRow:
     end_line: int
     signature: str | None
     doc: str | None
+    doc_start_line: int | None = None  # first line of a JSDoc above start_line; None in Python
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,7 @@ def file_symbols(path: str, text: str, language: str) -> ParseResult:
         if kind == "function" and chain and chain[-1][0] == "class":
             kind = "method"
         outer = node.parent if node.parent and node.parent.type == "decorated_definition" else node
+        doc, doc_start_line = _doc(language, source, node, body)
         rows.append(
             SymbolRow(
                 path=path,
@@ -142,7 +144,8 @@ def file_symbols(path: str, text: str, language: str) -> ParseResult:
                 start_line=outer.start_point.row + 1,
                 end_line=_last_line(node),
                 signature=_signature(source, node, body),
-                doc=_doc(language, source, node, body),
+                doc=doc,
+                doc_start_line=doc_start_line,
             )
         )
     return ParseResult(rows=rows, error_nodes=_count_errors(root))
@@ -194,11 +197,14 @@ def _count_errors(root: Node) -> int:
 # ── Docs ──────────────────────────────────────────────────────────────────────
 
 
-def _doc(language: str, source: bytes, node: Node, body: Node) -> str | None:
-    """A definition's doc: the Python docstring in its body, or the JSDoc just above it."""
+def _doc(language: str, source: bytes, node: Node, body: Node) -> tuple[str | None, int | None]:
+    """A definition's doc and, for a JSDoc above it, the comment's first line (1-based)."""
     if language == "python":
-        return _python_doc(source, body)
-    return _jsdoc(source, _statement(node))
+        return _python_doc(source, body), None
+    comment = _jsdoc(_statement(node))
+    if comment is None:
+        return None, None
+    return _clean_jsdoc(_text(source, comment)), comment.start_point.row + 1
 
 
 def _module_doc(language: str, source: bytes, root: Node) -> str | None:
@@ -239,14 +245,14 @@ def _statement(node: Node) -> Node:
     return node
 
 
-def _jsdoc(source: bytes, statement: Node) -> str | None:
+def _jsdoc(statement: Node) -> Node | None:
     """The `/** */` comment ending on the line before a statement, or on its first line."""
     comment = statement.prev_named_sibling
     if comment is None or not _is_jsdoc(comment):
         return None
     if comment.end_point.row < statement.start_point.row - 1:
         return None
-    return _clean_jsdoc(_text(source, comment))
+    return comment
 
 
 def _is_jsdoc(node: Node) -> bool:
