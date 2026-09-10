@@ -52,3 +52,24 @@ jobs:
 
       - name: Test
         run: uv run pytest
+
+  build:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.13.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the web page
+        working-directory: web
+        run: npm ci && npm run build
+
+      - name: Build the Docker image
+        run: docker build --tag code-qa-service:ci .
