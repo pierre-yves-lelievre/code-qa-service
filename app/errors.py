@@ -65,11 +65,19 @@ class InvalidRepoUrlError(ServiceError):
 
 
 class TooManyJobsError(ServiceError):
-    """Raised when the per-repo or global running-job limit is reached."""
+    """Raised when the global limit on active index jobs is reached."""
 
     code = "too_many_jobs"
     status_code = 429
     default_message = "Too many indexing jobs are running; try again later."
+
+
+class IndexInProgressError(ServiceError):
+    """Raised when the repository already has a pending or running index job."""
+
+    code = "index_in_progress"
+    status_code = 409
+    default_message = "An index job for this repository is already pending or running."
 
 
 class ProviderError(ServiceError):

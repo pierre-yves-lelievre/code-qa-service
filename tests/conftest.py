@@ -1,6 +1,8 @@
 """Shared with surrogate-model-service; adapted: bare client plus rolled-back db fixtures."""
 
-from collections.abc import Iterator
+import itertools
+from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 from pathlib import Path
 
 import psycopg
@@ -9,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.db import run_migrations
+from app.jobs import JobStore
 from app.main import app
 
 
@@ -36,3 +39,26 @@ def db(migrated: None) -> Iterator[psycopg.Connection]:
     with psycopg.connect(settings.database_url, autocommit=True) as conn:
         with conn.transaction(force_rollback=True):
             yield conn
+
+
+@pytest.fixture
+def jobs(db: psycopg.Connection) -> JobStore:
+    """JobStore whose every unit of work runs inside the test's rolled-back transaction."""
+    return JobStore(connect=lambda: nullcontext(db))
+
+
+@pytest.fixture
+def make_repo(db: psycopg.Connection) -> Callable[[], int]:
+    """Factory inserting a distinct `repos` row per call and returning its id."""
+    counter = itertools.count(1)
+
+    def _make() -> int:
+        """Insert one repo named after the next counter value."""
+        name = f"repo{next(counter)}"
+        (repo_id,) = db.execute(
+            "INSERT INTO repos (owner, name, url) VALUES (%s, %s, %s) RETURNING id",
+            ("octo", name, f"https://github.com/octo/{name}"),
+        ).fetchone()
+        return repo_id
+
+    return _make
