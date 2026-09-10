@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
+from app.answering import ask
 from app.config import settings
 from app.db import check_database
 from app.embeddings import FakeEmbeddings, VoyageEmbeddings
@@ -17,7 +18,9 @@ from app.errors import (
     IndexInProgressError,
     InvalidRepoUrlError,
     JobNotFoundError,
+    ProviderError,
     RepoNotFoundError,
+    RepoNotIndexedError,
     RepoTooLargeError,
     ServiceError,
     TooManyJobsError,
@@ -28,6 +31,8 @@ from app.jobs import JobStore
 from app.llm import ClaudeLLM, FakeLLM
 from app.logging_setup import get_logger
 from app.schemas import (
+    AskRequest,
+    AskResponse,
     DatabaseHealth,
     ErrorResponse,
     HealthResponse,
@@ -38,7 +43,12 @@ from app.schemas import (
     RepoHitResponse,
     RepoResponse,
     RepoSearchResponse,
+    Retrievers,
     SnapshotInfo,
+    SnapshotRef,
+    SourceResponse,
+    Timings,
+    Tokens,
 )
 from app.store import ChunkStore
 
@@ -199,6 +209,55 @@ def get_repo(repo_id: int, store: Annotated[ChunkStore, Depends(get_store)]) -> 
             indexed_at=snapshot.indexed_at,
             stats=snapshot.stats,
         ),
+    )
+
+
+@router.post(
+    "/ask",
+    response_model=AskResponse,
+    summary="Ask a question about an indexed repository",
+    description=(
+        "Plans the search (one structured call), retrieves from the active snapshot over three "
+        "legs, and answers with one Claude call over the 12 best sources as citable search "
+        "results plus a compact index of the next ones. Citations that do not map to a briefed "
+        "source are dropped and noted; links are built server-side from path, lines and commit "
+        "sha. `not_found` is set when the relevance floor fires, nothing is retrieved (no call "
+        "is made), or the model says so. Send the returned `conversation_id` to continue: the "
+        "last four turns are replayed with their sources and cached. Every request is logged."
+    ),
+    responses=_errors(RepoNotFoundError, RepoNotIndexedError, ProviderError),
+)
+def ask_question(
+    body: AskRequest,
+    request: Request,
+    store: Annotated[ChunkStore, Depends(get_store)],
+    embeddings: Annotated[VoyageEmbeddings | FakeEmbeddings, Depends(get_embeddings)],
+    llm: Annotated[ClaudeLLM | FakeLLM, Depends(get_llm)],
+) -> AskResponse:
+    """Answer one question; a plain def, so the sync SDK and psycopg calls run in the threadpool."""
+    conversation_id = str(body.conversation_id) if body.conversation_id else None
+    result = ask(
+        body.repo_id,
+        body.question,
+        conversation_id,
+        request.state.request_id,
+        store,
+        embeddings,
+        llm,
+    )
+    return AskResponse(
+        conversation_id=result.conversation_id,
+        answer=result.answer,
+        not_found=result.not_found,
+        sources=[
+            SourceResponse(**{k: getattr(s, k) for k in SourceResponse.model_fields})
+            for s in result.sources
+        ],
+        retrievers=Retrievers(**result.retrievers),
+        timings=Timings(**result.timings),
+        tokens=Tokens(**result.tokens),
+        snapshot=SnapshotRef(commit_sha=result.commit_sha, indexed_at=result.indexed_at),
+        notes=result.notes,
     )
 
 

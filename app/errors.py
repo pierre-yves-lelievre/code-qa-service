@@ -32,6 +32,14 @@ class RepoNotFoundError(ServiceError):
     default_message = "Repository not found."
 
 
+class RepoNotIndexedError(ServiceError):
+    """Raised when a repository has no active snapshot to answer from yet."""
+
+    code = "repo_not_indexed"
+    status_code = 409
+    default_message = "Repository has no indexed snapshot yet."
+
+
 class JobNotFoundError(ServiceError):
     """Raised when a requested job ID does not exist in the job store."""
 

@@ -54,12 +54,13 @@ class Hit:
 
 @dataclass(frozen=True)
 class Legs:
-    """Each leg's hits in rank order and its trace, the member identifiers, the query tokens."""
+    """Each leg's hits in rank order and trace, the member identifiers, the query embedding."""
 
     hits: dict[Leg, list[Hit]]
     trace: dict[Leg, dict[str, Any]]
     identifiers: tuple[str, ...]
     embed_tokens: int
+    embed_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,7 @@ class Retrieval:
     legs: dict[Leg, dict[str, Any]]
     identifiers: tuple[str, ...]
     embed_tokens: int
+    embed_ms: int = 0
 
 
 # ── Tokens ────────────────────────────────────────────────────────────────────
@@ -181,7 +183,7 @@ def search_legs(
 ) -> Legs:
     """Run the symbol, full-text and vector legs; a leg that raises is marked unavailable."""
     identifiers: list[str] = []
-    embed_tokens = 0
+    embed_tokens = embed_ms = 0
 
     def symbol() -> tuple[list[Hit], LegStatus]:
         """Resolve candidates by membership, then walk the ladder over the members."""
@@ -204,8 +206,10 @@ def search_legs(
 
     def vector() -> tuple[list[Hit], LegStatus]:
         """Embed the query and take its nearest chunks."""
-        nonlocal embed_tokens
+        nonlocal embed_tokens, embed_ms
+        started = time.monotonic()
         embedded = embeddings.embed_query(plan.query)
+        embed_ms = round((time.monotonic() - started) * 1000)
         embed_tokens = embedded.tokens
         found = store.vector_search(
             snapshot_id, embeddings.model, embedded.vectors[0], VECTOR_LIMIT
@@ -227,7 +231,7 @@ def search_legs(
             "hits": len(found),
             "ms": round((time.monotonic() - started) * 1000),
         }
-    return Legs(hits, trace, tuple(identifiers), embed_tokens)
+    return Legs(hits, trace, tuple(identifiers), embed_tokens, embed_ms)
 
 
 def retrieve(
@@ -254,7 +258,9 @@ def retrieve(
         no_relevant_sources=no_relevant,
         **{leg: trace["status"] for leg, trace in legs.trace.items()},
     )
-    return Retrieval(full, index, no_relevant, legs.trace, legs.identifiers, legs.embed_tokens)
+    return Retrieval(
+        full, index, no_relevant, legs.trace, legs.identifiers, legs.embed_tokens, legs.embed_ms
+    )
 
 
 # ── Fusion ────────────────────────────────────────────────────────────────────

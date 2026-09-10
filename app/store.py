@@ -307,6 +307,42 @@ class ChunkStore:
         with self._connect() as conn, conn.cursor(row_factory=class_row(StoredTurn)) as cur:
             return cur.execute(_TURNS, (repo_id, conversation_id, limit)).fetchall()
 
+    def record_query(
+        self,
+        *,
+        request_id: str,
+        repo_id: int,
+        snapshot_id: int,
+        conversation_id: str,
+        question: str,
+        answer: str | None,
+        sources: list[dict[str, Any]],
+        retrievers: dict[str, Any],
+        timings: dict[str, int],
+        tokens: dict[str, int],
+        not_found: bool,
+    ) -> None:
+        """Log one /ask to `queries`; a null answer marks a failed call and is never history."""
+        with self._connect() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO queries (request_id, repo_id, snapshot_id, conversation_id, question,"
+                " answer, sources, retrievers, timings, tokens, not_found)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    request_id,
+                    repo_id,
+                    snapshot_id,
+                    conversation_id,
+                    question,
+                    answer,
+                    Jsonb(sources),
+                    Jsonb(retrievers),
+                    Jsonb(timings),
+                    Jsonb(tokens),
+                    not_found,
+                ),
+            )
+
     def activate(self, snapshot_id: int, stats: dict[str, Any]) -> None:
         """Retire the repo's active snapshot and activate this one, in one transaction."""
         with self._connect() as conn, conn.transaction():

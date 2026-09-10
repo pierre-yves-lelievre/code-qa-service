@@ -451,6 +451,43 @@ response carries `X-Request-ID`.
 **`summary.py`**: one Claude call over README + top-level structure → 3-sentence summary + four
 suggested questions, stored on `repos`. Best-effort; failure leaves it null.
 
+**Decisions** (agreed in the Phase 7 plan):
+- *History*:
+  - Held on the server. `/ask` takes an optional `conversation_id`; without one, a new one is
+    minted and returned.
+  - Migration 0002 adds `queries.conversation_id`.
+  - The last 4 answered turns are replayed. Each cited source is kept in `queries.sources` with
+    its text blocks and commit SHA, so the replay is byte-identical and cacheable.
+  - A failed call is logged with a null answer and is never history.
+- *Briefing*:
+  - `system` is two blocks: the prompt, then the repo context (owner/name, commit SHA,
+    summary), which carries breakpoint 1.
+  - History turns are the question plus that turn's cited sources as search results, then the
+    answer. Breakpoint 2 is on the last answer.
+  - The current turn is the question, the floor sentence when the floor fired, the full hits,
+    then the compact index.
+  - A split top hit is re-sent as its run of parts (up to 4,000 tokens), in one search result
+    with one block per part. A truncated chunk has no stored full text and stays as it is.
+- *Answer call*:
+  - `complete()` returns `Completion(text, citations, usage, truncated)`, and the SDK stays in
+    `llm.py`.
+  - A 5xx is retried once, immediately. Timeouts and 4xx responses are not retried.
+  - `answer_timeout_s = 60`.
+  - When nothing is retrieved, no call is made and the answer is "Not found in the indexed
+    code."
+- *Validity*:
+  - A citation must land, by its global `search_result_index`, on a briefed source with the
+    same `source` string. Otherwise it is dropped and noted.
+  - The cited blocks narrow the lines.
+  - `not_found` is set by the floor, by no sources, or by the model's sentinel.
+- *Summary*:
+  - It is a structured call over the top-level README (capped at 24 KB) and the top-level tree.
+  - It runs after embedding and before activation. A failure writes nothing and shows in the
+    snapshot stats.
+  - `GET /repos/{id}` returns the summary, the suggested questions and the active snapshot.
+- *Errors*: an unknown repo is 404 `repo_not_found`; a repo with no active snapshot is 409
+  `repo_not_indexed`.
+
 **Tests**: happy path with `FakeLLM`; citation to an unknown source is dropped and noted;
 floor-fired question returns `not_found=true`; enumerate intent widens the compact index; second
 turn includes the first turn's sources in the request; unknown repo → 404 `repo_not_found`.

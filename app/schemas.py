@@ -1,9 +1,10 @@
 """Pydantic request and response models for the HTTP boundary."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 
 class ErrorResponse(BaseModel):
@@ -93,6 +94,106 @@ class RepoResponse(BaseModel):
         None, json_schema_extra={"example": ["Where is the login endpoint defined?"]}
     )
     snapshot: SnapshotInfo | None = None
+
+
+class AskRequest(BaseModel):
+    """A question about an indexed repository, optionally continuing a conversation."""
+
+    repo_id: int = Field(..., json_schema_extra={"example": 1})
+    question: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)
+    ] = Field(..., json_schema_extra={"example": "Where is the login endpoint defined?"})
+    conversation_id: UUID | None = Field(
+        None,
+        description="Omit to start a new conversation; send the returned id to continue it.",
+        json_schema_extra={"example": None},
+    )
+
+
+class SourceResponse(BaseModel):
+    """A cited source; the link is built by the server from path, lines and commit sha."""
+
+    path: str = Field(..., json_schema_extra={"example": "backend/app/api/routes/login.py"})
+    start_line: int = Field(..., json_schema_extra={"example": 21})
+    end_line: int = Field(..., json_schema_extra={"example": 38})
+    kind: str = Field(..., json_schema_extra={"example": "function"})
+    qualname: str | None = Field(
+        None, json_schema_extra={"example": "app.api.routes.login.login_access_token"}
+    )
+    tier: Literal["symbol", "fts", "vector"] | None = Field(
+        None, json_schema_extra={"example": "symbol"}
+    )
+    excerpt: str = Field(..., json_schema_extra={"example": "def login_access_token(...):"})
+    github_url: str = Field(
+        ...,
+        json_schema_extra={
+            "example": "https://github.com/fastapi/full-stack-fastapi-template/blob/"
+            "3f1c2a9e8d7b6c5a4f3e2d1c0b9a8f7e6d5c4b3a/backend/app/api/routes/login.py#L21-L38"
+        },
+    )
+
+
+class LegTrace(BaseModel):
+    """One retrieval leg: its status, hit count and time."""
+
+    status: Literal["ok", "or_fallback", "empty", "skipped", "unavailable"] = Field(
+        ..., json_schema_extra={"example": "ok"}
+    )
+    hits: int = Field(..., json_schema_extra={"example": 12})
+    ms: int = Field(..., json_schema_extra={"example": 4})
+
+
+class Retrievers(BaseModel):
+    """What each retrieval leg and the planner did."""
+
+    symbol: LegTrace
+    fts: LegTrace
+    vector: LegTrace
+    planner: Literal["ok", "fallback"] = Field(..., json_schema_extra={"example": "ok"})
+
+
+class Timings(BaseModel):
+    """Milliseconds per stage; embed is inside retrieve."""
+
+    plan_ms: int = Field(..., json_schema_extra={"example": 900})
+    embed_ms: int = Field(..., json_schema_extra={"example": 120})
+    retrieve_ms: int = Field(..., json_schema_extra={"example": 180})
+    llm_ms: int = Field(..., json_schema_extra={"example": 6200})
+    total_ms: int = Field(..., json_schema_extra={"example": 7350})
+
+
+class Tokens(BaseModel):
+    """Claude tokens for the planner and the answer together."""
+
+    input: int = Field(..., json_schema_extra={"example": 2400})
+    output: int = Field(..., json_schema_extra={"example": 310})
+    cache_read: int = Field(..., json_schema_extra={"example": 9800})
+    cache_write: int = Field(..., json_schema_extra={"example": 0})
+
+
+class SnapshotRef(BaseModel):
+    """The snapshot the answer was retrieved from."""
+
+    commit_sha: str = Field(
+        ..., json_schema_extra={"example": "3f1c2a9e8d7b6c5a4f3e2d1c0b9a8f7e6d5c4b3a"}
+    )
+    indexed_at: datetime | None = None
+
+
+class AskResponse(BaseModel):
+    """An answer with its cited sources, retrieval trace, timings, tokens and snapshot."""
+
+    conversation_id: UUID
+    answer: str = Field(
+        ..., json_schema_extra={"example": "`login_access_token` in `login.py` issues the token."}
+    )
+    not_found: bool = Field(..., json_schema_extra={"example": False})
+    sources: list[SourceResponse]
+    retrievers: Retrievers
+    timings: Timings
+    tokens: Tokens
+    snapshot: SnapshotRef
+    notes: list[str] = Field(..., json_schema_extra={"example": []})
 
 
 class IndexRequest(BaseModel):

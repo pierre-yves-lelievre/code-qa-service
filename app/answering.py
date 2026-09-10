@@ -5,16 +5,25 @@ the sources they cited (breakpoint 2 on the last answer), then the question, the
 search-result blocks, and the compact index as plain lines.
 """
 
+import time
+import uuid
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
+from datetime import datetime
 from typing import Any
 from urllib.parse import quote
 
 from app.chunking import estimate_tokens
-from app.llm import Citation, Completion
-from app.planning import HISTORY_TURNS
-from app.retrieval import Hit
-from app.store import StoredTurn
+from app.config import settings
+from app.embeddings import FakeEmbeddings, VoyageEmbeddings
+from app.errors import ProviderError, RepoNotFoundError, RepoNotIndexedError
+from app.llm import Citation, ClaudeLLM, Completion, FakeLLM, Usage
+from app.logging_setup import get_logger
+from app.planning import HISTORY_TURNS, Turn, plan
+from app.retrieval import Hit, retrieve
+from app.store import ChunkStore, StoredTurn
+
+log = get_logger(__name__)
 
 SYSTEM = (
     "You answer questions about one code repository using only the provided sources. Cite every"
@@ -31,6 +40,7 @@ FLOOR_NOTE = (
 INDEX_HEADER = "Other code that may be relevant, not provided in full (path :: symbol — signature):"
 NO_CITATIONS_NOTE = "The answer cites no sources."
 TRUNCATED_NOTE = "The answer was cut off at the token limit."
+ANSWER_MAX_TOKENS = 1_500
 EXPAND_TOKENS = 4_000
 EXCERPT_LINES, EXCERPT_CHARS = 12, 800
 CACHE = {"type": "ephemeral"}
@@ -92,6 +102,22 @@ class Checked:
 
     sources: list[Source]
     not_found: bool
+    notes: list[str]
+
+
+@dataclass(frozen=True)
+class Answer:
+    """What /ask returns: the checked answer, the trace, timings, tokens and snapshot."""
+
+    conversation_id: str
+    answer: str
+    not_found: bool
+    sources: list[Source]
+    retrievers: dict[str, Any]
+    timings: dict[str, int]
+    tokens: dict[str, int]
+    commit_sha: str
+    indexed_at: datetime | None
     notes: list[str]
 
 
@@ -292,6 +318,140 @@ def is_not_found(answer: str, floor: bool, retrieved: bool) -> bool:
 def stored(source: Source) -> dict[str, Any]:
     """A cited source as `queries.sources` keeps it, enough to brief it again."""
     return asdict(source)
+
+
+# ── Ask ───────────────────────────────────────────────────────────────────────
+
+
+def ask(
+    repo_id: int,
+    question: str,
+    conversation_id: str | None,
+    request_id: str,
+    store: ChunkStore,
+    embeddings: VoyageEmbeddings | FakeEmbeddings,
+    llm: ClaudeLLM | FakeLLM,
+) -> Answer:
+    """Plan, retrieve, brief, answer and check one question; every outcome is logged to queries."""
+    started = time.monotonic()
+    repo = store.repo(repo_id)
+    if repo is None:
+        raise RepoNotFoundError()
+    snapshot = store.active_snapshot(repo_id)
+    if snapshot is None or snapshot.commit_sha is None:
+        raise RepoNotIndexedError()
+    conversation = conversation_id or str(uuid.uuid4())
+    history = store.recent_turns(repo_id, conversation, HISTORY_TURNS)
+    clock = time.monotonic()
+    planned = plan(question, [Turn(t.question, t.answer) for t in history], llm)
+    plan_ms = _ms(clock)
+    clock = time.monotonic()
+    found = retrieve(planned, snapshot.id, store, embeddings)
+    retrieve_ms = _ms(clock)
+    retrievers: dict[str, Any] = {**found.legs, "planner": planned.planner}
+    usage, llm_ms = planned.usage, 0
+
+    def timings() -> dict[str, int]:
+        """The stage timings so far."""
+        return {
+            "plan_ms": plan_ms,
+            "embed_ms": found.embed_ms,
+            "retrieve_ms": retrieve_ms,
+            "llm_ms": llm_ms,
+            "total_ms": _ms(started),
+        }
+
+    def record(answer: str | None, sources: list[Source], not_found: bool) -> None:
+        """Log the request to `queries`; the stored sources are enough to brief them again."""
+        store.record_query(
+            request_id=request_id,
+            repo_id=repo_id,
+            snapshot_id=snapshot.id,
+            conversation_id=conversation,
+            question=question,
+            answer=answer,
+            sources=[stored(s) for s in sources],
+            retrievers=retrievers,
+            timings=timings(),
+            tokens={**asdict(usage), "embed": found.embed_tokens},
+            not_found=not_found,
+        )
+
+    if found.full:
+        context = repo_context(repo.owner, repo.name, snapshot.commit_sha, repo.summary)
+        full = _full_sources(found.full, snapshot.id, snapshot.commit_sha, store)
+        floor = found.no_relevant_sources
+        briefing = brief(question, context, history, full, found.index, floor)
+        clock = time.monotonic()
+        try:
+            completion = llm.complete(
+                briefing.system, briefing.messages, ANSWER_MAX_TOKENS, settings.answer_timeout_s
+            )
+        except ProviderError:
+            llm_ms = _ms(clock)
+            record(None, [], False)
+            raise
+        llm_ms = _ms(clock)
+        usage = _sum(usage, completion.usage)
+        text = completion.text.strip() or f"{NOT_FOUND}."
+        checked = check(replace(completion, text=text), briefing.sources, repo.url, floor, True)
+    else:  # nothing to cite: no call
+        text, checked = f"{NOT_FOUND}.", Checked([], True, [])
+    record(text, checked.sources, checked.not_found)
+    log.info(
+        "ask_done",
+        repo_id=repo_id,
+        snapshot_id=snapshot.id,
+        planner=planned.planner,
+        not_found=checked.not_found,
+        sources=len(checked.sources),
+        notes=len(checked.notes),
+        input_tokens=usage.input,
+        output_tokens=usage.output,
+        cache_read_tokens=usage.cache_read,
+        total_ms=_ms(started),
+    )
+    return Answer(
+        conversation_id=conversation,
+        answer=text,
+        not_found=checked.not_found,
+        sources=checked.sources,
+        retrievers=retrievers,
+        timings=timings(),
+        tokens=asdict(usage),
+        commit_sha=snapshot.commit_sha,
+        indexed_at=snapshot.indexed_at,
+        notes=checked.notes,
+    )
+
+
+def _full_sources(
+    full: Sequence[Hit], snapshot_id: int, commit_sha: str, store: ChunkStore
+) -> list[Briefed]:
+    """The full hits as sources, the top one expanded to its symbol's parts when it was split."""
+    top, rest = full[0], full[1:]
+    run = [top]
+    if top.part > 0:
+        try:
+            run = expand_top(top, store.symbol_parts(snapshot_id, top))
+        except Exception as exc:
+            log.warning("expand_failed", error_type=type(exc).__name__)
+    return [to_briefed(run, commit_sha), *(to_briefed([h], commit_sha) for h in rest)]
+
+
+def _sum(a: Usage, b: Usage) -> Usage:
+    """Two calls' tokens added up."""
+    return Usage(
+        a.input + b.input,
+        a.output + b.output,
+        a.cache_read + b.cache_read,
+        a.cache_write + b.cache_write,
+    )
+
+
+def _ms(since: float) -> int:
+    """Milliseconds since a monotonic clock reading."""
+    return round((time.monotonic() - since) * 1000)
 
 
 def _index_lines(index: Sequence[Hit]) -> str:
