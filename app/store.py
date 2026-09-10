@@ -13,6 +13,7 @@ from psycopg.types.json import Jsonb
 from app.chunking import Chunk
 from app.db import connection
 from app.logging_setup import get_logger
+from app.retrieval import Hit
 
 log = get_logger(__name__)
 
@@ -29,6 +30,44 @@ _INSERT_CHUNK = (
     " signature, doc, text, content_hash, tokens, truncated, search_a, search_b, search_c)"
     " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
 )
+
+# ── Retrieval SQL: every query yields `Hit` columns, scoped to one snapshot ─────
+_HIT = (
+    "SELECT c.id, f.path, c.kind, c.name, c.qualname, c.part, c.start_line, c.end_line,"
+    " c.signature, c.text, c.truncated"
+)
+_FROM = " FROM chunks c JOIN files f ON f.id = c.file_id"
+# `right()`, not LIKE: an `_` in an identifier would be a LIKE wildcard.
+_MATCHES = "(c.qualname = u.x OR c.name = u.x OR right(c.qualname, length(u.x) + 1) = '.' || u.x)"
+_MEMBERS = (
+    "SELECT u.x FROM unnest(%s::text[]) WITH ORDINALITY AS u(x, ord)"
+    " WHERE EXISTS (SELECT 1 FROM chunks c WHERE c.snapshot_id = %s AND " + _MATCHES + ")"
+    " ORDER BY u.ord"
+)
+_SYMBOLS = (
+    "WITH m AS (SELECT c.id, u.ord,"
+    " CASE WHEN c.qualname = u.x THEN 1 WHEN c.name = u.x THEN 2 ELSE 3 END AS rung"
+    " FROM unnest(%s::text[]) WITH ORDINALITY AS u(x, ord)"
+    " JOIN chunks c ON c.snapshot_id = %s AND " + _MATCHES + "),"
+    " kept AS (SELECT id, ord, rung FROM"
+    " (SELECT *, min(rung) OVER (PARTITION BY ord) AS top FROM m) r WHERE rung = top),"
+    " best AS (SELECT DISTINCT ON (id) id, ord, rung FROM kept ORDER BY id, ord) "
+    + _HIT + ", 1.0::float8 / b.rung AS score" + _FROM + " JOIN best b ON b.id = c.id"
+    " ORDER BY b.ord, b.rung, f.path, c.start_line, c.part LIMIT %s"
+)  # fmt: skip
+_FTS_AND = (
+    _HIT + ", ts_rank_cd(c.tsv, q) AS score" + _FROM + ", plainto_tsquery('simple', %s) AS q"
+    " WHERE c.snapshot_id = %s AND c.tsv @@ q ORDER BY score DESC, c.id LIMIT %s"
+)
+_FTS_OR = (
+    _HIT + ", ts_rank_cd(c.tsv, q) AS score" + _FROM + ", to_tsquery('simple', %s) AS q"
+    " WHERE c.snapshot_id = %s AND c.tsv @@ q ORDER BY score DESC, c.id LIMIT %s"
+)
+_VECTOR = (
+    _HIT + ", 1 - (e.embedding <=> %s) AS score" + _FROM
+    + " JOIN embeddings e ON e.content_hash = c.content_hash AND e.model = %s"
+    " WHERE c.snapshot_id = %s ORDER BY e.embedding <=> %s LIMIT %s"
+)  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -159,6 +198,49 @@ class ChunkStore:
                 [(content_hash, model, Vector(vector)) for content_hash, vector in rows],
             )
         return len(rows)
+
+    # ── Retrieval ─────────────────────────────────────────────────────────────
+
+    def resolve_identifiers(self, snapshot_id: int, candidates: list[str]) -> list[str]:
+        """The candidates that are a name, a qualname, or a dotted qualname suffix, in order."""
+        if not candidates:
+            return []
+        with self._connect() as conn, conn.transaction():
+            rows = conn.execute(_MEMBERS, (candidates, snapshot_id)).fetchall()
+        return [x for (x,) in rows]
+
+    def symbol_search(self, snapshot_id: int, identifiers: list[str], limit: int) -> list[Hit]:
+        """The ladder per identifier (qualname, name, dotted suffix), each at its first rung."""
+        with self._connect() as conn, conn.transaction():
+            with conn.cursor(row_factory=class_row(Hit)) as cur:
+                return cur.execute(_SYMBOLS, (identifiers, snapshot_id, limit)).fetchall()
+
+    def text_search(
+        self, snapshot_id: int, text: str, terms: list[str], limit: int
+    ) -> tuple[list[Hit], Literal["and", "or"]]:
+        """Full text: every word of `text` (AND); when that finds nothing, any of `terms` (OR)."""
+        with self._connect() as conn, conn.transaction():
+            with conn.cursor(row_factory=class_row(Hit)) as cur:
+                if text.strip():
+                    hits = cur.execute(_FTS_AND, (text, snapshot_id, limit)).fetchall()
+                    if hits:
+                        return hits, "and"
+                if not terms:
+                    return [], "and"
+                return cur.execute(
+                    _FTS_OR, (" | ".join(terms), snapshot_id, limit)
+                ).fetchall(), "or"
+
+    def vector_search(
+        self, snapshot_id: int, model: str, vector: list[float], limit: int
+    ) -> list[Hit]:
+        """The chunks whose `model` vectors are nearest the query vector, by cosine."""
+        query = Vector(vector)
+        with self._connect() as conn, conn.transaction():
+            # The HNSW index spans every snapshot; iterate it until `limit` rows pass the filter.
+            conn.execute("SET LOCAL hnsw.iterative_scan = strict_order")
+            with conn.cursor(row_factory=class_row(Hit)) as cur:
+                return cur.execute(_VECTOR, (query, model, snapshot_id, query, limit)).fetchall()
 
     def activate(self, snapshot_id: int, stats: dict[str, Any]) -> None:
         """Retire the repo's active snapshot and activate this one, in one transaction."""

@@ -43,7 +43,8 @@ app/
 ├── llm.py            # ClaudeLLM (thin SDK wrapper), FakeLLM; structured(), complete()
 ├── store.py          # ChunkStore: upserts, snapshot activate/sweep, 3 retrieval queries
 ├── planning.py       # one structured-output call: standalone query, identifiers, intent
-├── retrieval.py      # split_identifiers(), rrf(), collapse_parts(), relevance floor — pure
+├── retrieval.py      # split_identifiers(), rrf(), collapse_parts(), floor — pure; plus the
+│                     #   leg runner and retrieve(), the only I/O there (per-leg isolation)
 ├── answering.py      # briefing (two-tier), cached history, Claude call, citations, validity check
 ├── summary.py        # one Claude call per index run: repo summary + suggested questions
 └── indexing.py       # _run_index(): clone -> parse -> chunk -> embed -> summary -> activate

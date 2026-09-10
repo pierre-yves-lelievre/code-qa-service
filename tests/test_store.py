@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 from app.chunking import chunk_file, window_file
+from app.config import settings
+from app.embeddings import FakeEmbeddings
+from app.github import walk_files
+from app.indexing import _index_file
 from app.parsing import file_symbols
+from app.retrieval import or_terms, split_identifiers
 from app.store import FileRow
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -115,3 +120,81 @@ def test_files_and_chunks_round_trip_with_search_fields(store, db):
         (snapshot_id,),
     ).fetchone()
     assert hit == "shop.models.Product"
+
+
+# ── Retrieval queries ─────────────────────────────────────────────────────────
+
+
+def _py_snapshot(store, sha: str = "a" * 40) -> int:
+    """Index tests/fixtures/py_app as an active snapshot with fake vectors; return its id."""
+    repo_id = store.upsert_repo("octo", "py_app", "https://github.com/octo/py_app")
+    snapshot_id = store.create_snapshot(repo_id, "main", sha)
+    batch = [_index_file(entry)[:2] for entry in walk_files(FIXTURES / "py_app")]
+    store.add_files(snapshot_id, batch)
+    fake = FakeEmbeddings(settings.embedding_dims)
+    pending, _ = store.pending_embeddings(snapshot_id, fake.model)
+    hashes = [content_hash for content_hash, _ in pending]
+    texts = store.chunk_texts(snapshot_id, hashes)
+    vectors = fake.embed_documents([texts[h] for h in hashes]).vectors
+    store.add_embeddings(fake.model, list(zip(hashes, vectors, strict=True)))
+    store.activate(snapshot_id, {})
+    return snapshot_id
+
+
+def _chunk(db, snapshot_id: int, qualname: str) -> tuple[int, str]:
+    """The id and text of the snapshot's first chunk with this qualname."""
+    return db.execute(
+        "SELECT id, text FROM chunks WHERE snapshot_id = %s AND qualname = %s ORDER BY id LIMIT 1",
+        (snapshot_id, qualname),
+    ).fetchone()
+
+
+def test_membership_keeps_names_qualnames_and_dotted_suffixes_in_order(store):
+    snapshot_id = _py_snapshot(store)
+    candidates = ["Stripe", "Product.label", "slugify", "shop.util.tax_rate", "product", "total"]
+    assert store.resolve_identifiers(snapshot_id, candidates) == [
+        "Product.label",
+        "slugify",
+        "shop.util.tax_rate",
+        "total",
+    ]
+
+
+def test_symbol_ladder_stops_at_each_identifiers_first_rung(store):
+    snapshot_id = _py_snapshot(store)
+
+    def qualnames(*identifiers: str) -> list[str | None]:
+        """Qualnames of the ladder's hits for these identifiers."""
+        return [h.qualname for h in store.symbol_search(snapshot_id, list(identifiers), 50)]
+
+    assert qualnames("shop.models.Product") == ["shop.models.Product"]  # qualname rung
+    assert qualnames("slugify") == ["shop.util.slugify"]  # name rung
+    assert qualnames("Product.label") == ["shop.models.Product.label"] * 2  # suffix: getter, setter
+    assert qualnames("slugify", "shop.models.Product") == [
+        "shop.util.slugify",
+        "shop.models.Product",
+    ]  # in identifier order
+
+
+def test_full_text_uses_and_first_then_falls_back_to_or(store):
+    snapshot_id = _py_snapshot(store)
+    hits, mode = store.text_search(snapshot_id, split_identifiers("tax_rate"), or_terms("x"), 50)
+    assert (mode, hits[0].qualname) == ("and", "shop.util.tax_rate")
+
+    question = "how is the tax rate for a country computed"
+    hits, mode = store.text_search(snapshot_id, split_identifiers(question), or_terms(question), 50)
+    assert mode == "or"
+    assert "shop.util.tax_rate" in [h.qualname for h in hits]
+
+    assert store.text_search(snapshot_id, "zebra quantum", or_terms("zebra quantum"), 50)[0] == []
+
+
+def test_vector_leg_returns_the_chunk_whose_text_is_the_query_first(store, db):
+    snapshot_id = _py_snapshot(store)
+    chunk_id, text = _chunk(db, snapshot_id, "shop.util.slugify")
+    vector = FakeEmbeddings(settings.embedding_dims).embed_query(text).vectors[0]
+    hits = store.vector_search(snapshot_id, "fake", vector, 20)
+    assert len({h.id for h in hits}) == len(hits) > 1
+    assert hits[0].id == chunk_id
+    assert hits[0].score == pytest.approx(1.0)
+    assert all(h.score < 0.35 for h in hits[1:])  # hash-seeded noise: mechanics, not meaning
