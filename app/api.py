@@ -17,6 +17,7 @@ from app.errors import (
     IndexInProgressError,
     InvalidRepoUrlError,
     JobNotFoundError,
+    RepoNotFoundError,
     RepoTooLargeError,
     ServiceError,
     TooManyJobsError,
@@ -24,6 +25,7 @@ from app.errors import (
 from app.github import GitHubClient, RepoRef, parse_repo_url
 from app.indexing import _run_index
 from app.jobs import JobStore
+from app.llm import ClaudeLLM, FakeLLM
 from app.logging_setup import get_logger
 from app.schemas import (
     DatabaseHealth,
@@ -34,7 +36,9 @@ from app.schemas import (
     JobResponse,
     KeysHealth,
     RepoHitResponse,
+    RepoResponse,
     RepoSearchResponse,
+    SnapshotInfo,
 )
 from app.store import ChunkStore
 
@@ -83,6 +87,11 @@ def get_github(request: Request) -> GitHubClient:
 def get_embeddings(request: Request) -> VoyageEmbeddings | FakeEmbeddings:
     """The app's embeddings client, built in the lifespan from PROVIDERS; tests override it."""
     return request.app.state.embeddings
+
+
+def get_llm(request: Request) -> ClaudeLLM | FakeLLM:
+    """The app's LLM client, built in the lifespan from PROVIDERS; tests override it."""
+    return request.app.state.llm
 
 
 def get_jobs() -> JobStore:
@@ -157,6 +166,42 @@ def search_repos(
     return RepoSearchResponse(items=[RepoHitResponse(**asdict(hit)) for hit in github.search(q)])
 
 
+@router.get(
+    "/repos/{repo_id}",
+    response_model=RepoResponse,
+    summary="Indexed repository",
+    description=(
+        "A repository known to the service: its URL, the summary and suggested questions written "
+        "at index time (null until a summary call succeeds), and its active snapshot with commit "
+        "sha, branch, indexing time and stats (null before the first successful index)."
+    ),
+    responses=_errors(RepoNotFoundError),
+)
+def get_repo(repo_id: int, store: Annotated[ChunkStore, Depends(get_store)]) -> RepoResponse:
+    """One repository with its summary and active snapshot, or 404 when the id is unknown."""
+    repo = store.repo(repo_id)
+    if repo is None:
+        raise RepoNotFoundError()
+    snapshot = store.active_snapshot(repo_id)
+    return RepoResponse(
+        repo_id=repo.id,
+        owner=repo.owner,
+        name=repo.name,
+        url=repo.url,
+        summary=repo.summary,
+        suggested_questions=repo.suggested_questions,
+        snapshot=None
+        if snapshot is None
+        else SnapshotInfo(
+            snapshot_id=snapshot.id,
+            commit_sha=snapshot.commit_sha,
+            branch=snapshot.branch,
+            indexed_at=snapshot.indexed_at,
+            stats=snapshot.stats,
+        ),
+    )
+
+
 @router.post(
     "/index",
     status_code=202,
@@ -186,6 +231,7 @@ def index_repo(
     jobs: Annotated[JobStore, Depends(get_jobs)],
     store: Annotated[ChunkStore, Depends(get_store)],
     embeddings: Annotated[VoyageEmbeddings | FakeEmbeddings, Depends(get_embeddings)],
+    llm: Annotated[ClaudeLLM | FakeLLM, Depends(get_llm)],
 ) -> IndexAccepted:
     """Pre-check a repository, create its job, and run the index in the background."""
     requested = parse_repo_url(body.url)
@@ -195,7 +241,7 @@ def index_repo(
         info.owner, info.name, f"https://github.com/{info.owner}/{info.name}"
     )
     job = jobs.create(repo_id)
-    background.add_task(_run_index, job.id, repo_id, ref, jobs, store, github, embeddings)
+    background.add_task(_run_index, job.id, repo_id, ref, jobs, store, github, embeddings, llm)
     log.info("index_requested", job_id=job.id, repo_id=repo_id)
     return IndexAccepted(
         job_id=job.id,

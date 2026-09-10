@@ -16,7 +16,9 @@ from app.chunking import Chunk, chunk_file, estimate_tokens
 from app.config import Settings, settings
 from app.db import DatabaseStatus
 from app.embeddings import EMBED_BATCH_TOKENS, Embedded, FakeEmbeddings, VoyageEmbeddings
+from app.errors import ProviderError
 from app.jobs import INTERRUPTED_MESSAGE, JobStore
+from app.llm import FakeLLM
 from app.main import app
 from app.parsing import file_symbols, language_for
 from app.store import ChunkStore
@@ -247,6 +249,41 @@ def test_index_fixture_repo_end_to_end_activates_a_snapshot(
         snapshot_id,
     ) == [(0,)]
     assert not any((settings.data_dir / "clones").iterdir())  # the clone is removed
+
+
+def test_index_stores_a_summary_that_the_repo_route_returns_with_its_snapshot(
+    client, committed, mock_github, fixture_repo
+):
+    repo = fixture_repo("py_app")
+    job = _index(client, mock_github, repo)
+    r = client.get(f"/repos/{job['repo_id']}")
+    assert r.status_code == 200
+    body = r.json()
+    assert (body["owner"], body["name"], body["url"]) == ("octo", "py_app", REPO_URL)
+    assert body["summary"] == "A fake summary of the repository."
+    assert len(body["suggested_questions"]) == 4
+    snapshot = body["snapshot"]
+    assert (snapshot["snapshot_id"], snapshot["commit_sha"]) == (job["snapshot_id"], repo.head())
+    assert snapshot["indexed_at"] is not None
+    assert snapshot["stats"]["summary"]["status"] == "ok"
+    assert snapshot["stats"]["summary"]["input_tokens"] > 0
+
+
+def test_a_failed_summary_still_activates_the_snapshot_and_leaves_the_summary_null(
+    client, committed, mock_github, mock_llm, fixture_repo
+):
+    mock_llm(FakeLLM(replies=[ProviderError("Claude timed out or is unreachable.")]))
+    job = _index(client, mock_github, fixture_repo("py_app"))
+    assert job["status"] == "succeeded"
+    body = client.get(f"/repos/{job['repo_id']}").json()
+    assert (body["summary"], body["suggested_questions"]) == (None, None)
+    assert body["snapshot"]["stats"]["summary"] == {"status": "failed"}
+
+
+def test_a_repo_without_a_snapshot_has_none_and_an_unknown_repo_is_404(client, committed):
+    repo_id = ChunkStore().upsert_repo("octo", "fresh", "https://github.com/octo/fresh")
+    assert client.get(f"/repos/{repo_id}").json()["snapshot"] is None
+    assert _error(client.get("/repos/999999")) == (404, "repo_not_found")
 
 
 def test_failed_reindex_leaves_the_previous_snapshot_active(

@@ -20,6 +20,7 @@ from app.errors import (
 )
 from app.github import GitHubClient
 from app.jobs import fail_interrupted
+from app.llm import ClaudeLLM, FakeLLM
 from app.logging_setup import configure_logging, get_logger
 
 
@@ -45,6 +46,10 @@ async def lifespan(app: FastAPI):
         )
     else:
         app.state.embeddings = FakeEmbeddings(settings.embedding_dims)
+    if settings.providers == "real" and settings.anthropic_api_key is not None:
+        app.state.llm = ClaudeLLM(settings.anthropic_api_key.get_secret_value(), settings.llm_model)
+    else:
+        app.state.llm = FakeLLM()
     log.info(
         "service_started",
         version=settings.app_version,
@@ -54,6 +59,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        app.state.llm.close()
         app.state.embeddings.close()
         app.state.github.close()
         close_pool()

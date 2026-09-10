@@ -1,4 +1,4 @@
-"""The index job: clone, walk, parse or window per file, batched inserts, embed, activate, sweep."""
+"""The index job: clone, walk, parse or window, batched inserts, embed, summary, activate, sweep."""
 
 import shutil
 import time
@@ -11,9 +11,12 @@ from app.embeddings import FakeEmbeddings, VoyageEmbeddings, token_batches
 from app.errors import EmbedBudgetExceededError, IndexTimeoutError, ServiceError
 from app.github import GitHubClient, RepoRef, WalkEntry, walk_files
 from app.jobs import JobStore
+from app.llm import ClaudeLLM, FakeLLM
 from app.logging_setup import get_logger
 from app.parsing import file_symbols, language_for
 from app.store import ChunkStore, FileRow
+from app.summary import inputs as summary_inputs
+from app.summary import summarize
 
 log = get_logger(__name__)
 
@@ -32,6 +35,7 @@ def _run_index(
     store: ChunkStore,
     github: GitHubClient,
     embeddings: VoyageEmbeddings | FakeEmbeddings,
+    llm: ClaudeLLM | FakeLLM,
 ) -> None:
     """Index a repo at its branch head; any failure marks the job and snapshot failed."""
     started = time.monotonic()
@@ -85,6 +89,9 @@ def _run_index(
                 )
 
         stats["embedding"] = _embed(job_id, snapshot_id, embeddings, jobs, store, deadline)
+        _check_deadline(deadline)
+        jobs.update(job_id, progress={"stage": "summarizing"})
+        stats["summary"] = _summarize(repo_id, entries, llm, store)
         _check_deadline(deadline)
         stats["seconds"] = round(time.monotonic() - started, 2)
         store.activate(snapshot_id, stats)
@@ -190,6 +197,25 @@ def _embed(
         "tokens_estimated": estimated,
         "tokens": used,
         "cost_usd": round(used * embeddings.usd_per_mtok / 1_000_000, 6),
+    }
+
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+
+
+def _summarize(
+    repo_id: int, entries: list[WalkEntry], llm: ClaudeLLM | FakeLLM, store: ChunkStore
+) -> dict[str, Any]:
+    """Best effort: store the summary and questions; a failed call writes nothing."""
+    readme, tree = summary_inputs(entries)
+    result = summarize(readme, tree, llm)
+    if result is None:
+        return {"status": "failed"}
+    store.set_summary(repo_id, result.text, list(result.questions))
+    return {
+        "status": "ok",
+        "input_tokens": result.usage.input,
+        "output_tokens": result.usage.output,
     }
 
 

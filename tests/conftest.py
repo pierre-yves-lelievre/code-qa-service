@@ -31,12 +31,13 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from pgvector.psycopg import register_vector  # noqa: E402
 
-from app.api import get_embeddings, get_github  # noqa: E402
+from app.api import get_embeddings, get_github, get_llm  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.db import run_migrations  # noqa: E402
 from app.embeddings import FakeEmbeddings, VoyageEmbeddings  # noqa: E402
 from app.github import GitHubClient  # noqa: E402
 from app.jobs import JobStore  # noqa: E402
+from app.llm import ClaudeLLM, FakeLLM  # noqa: E402
 from app.main import app  # noqa: E402
 from app.store import ChunkStore  # noqa: E402
 
@@ -193,3 +194,16 @@ def mock_embeddings() -> Iterator[Callable[..., VoyageEmbeddings | FakeEmbedding
 
     yield _use
     app.dependency_overrides.pop(get_embeddings, None)
+
+
+@pytest.fixture
+def mock_llm() -> Iterator[Callable[..., ClaudeLLM | FakeLLM]]:
+    """Setter installing an LLM client as the app's dependency."""
+
+    def _use(llm: ClaudeLLM | FakeLLM) -> ClaudeLLM | FakeLLM:
+        """Route the summary, planner and answer calls to `llm`."""
+        app.dependency_overrides[get_llm] = lambda: llm
+        return llm
+
+    yield _use
+    app.dependency_overrides.pop(get_llm, None)

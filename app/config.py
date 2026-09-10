@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     job_timeout_s: float = 1800.0
     embed_timeout_s: float = 30.0
     planner_timeout_s: float = 3.0
+    summary_timeout_s: float = 30.0
 
     # ── Retrieval ─────────────────────────────────────────────────────────────
     relevance_floor: float = 0.35

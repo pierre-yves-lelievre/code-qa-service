@@ -1,8 +1,9 @@
-"""ChunkStore: repo upsert, snapshots, per-batch files, chunks and embeddings, activation, sweep."""
+"""ChunkStore: repos and summaries, snapshots, files, chunks, embeddings, retrieval, queries."""
 
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
 
 import psycopg
@@ -94,6 +95,18 @@ class FileRow:
 
 
 @dataclass(frozen=True)
+class Repo:
+    """A repository row: identity, URL, and the summary written at index time, if any."""
+
+    id: int
+    owner: str
+    name: str
+    url: str
+    summary: str | None
+    suggested_questions: list[str] | None
+
+
+@dataclass(frozen=True)
 class Snapshot:
     """One snapshot of a repository at a commit."""
 
@@ -102,6 +115,8 @@ class Snapshot:
     commit_sha: str | None
     branch: str
     status: SnapshotStatus
+    indexed_at: datetime | None
+    stats: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -141,11 +156,28 @@ class ChunkStore:
             ).fetchone()
         return repo_id
 
+    def repo(self, repo_id: int) -> Repo | None:
+        """One repository, or None when the id is unknown."""
+        with self._connect() as conn, conn.cursor(row_factory=class_row(Repo)) as cur:
+            return cur.execute(
+                "SELECT id, owner, name, url, summary, suggested_questions FROM repos"
+                " WHERE id = %s",
+                (repo_id,),
+            ).fetchone()
+
+    def set_summary(self, repo_id: int, summary: str, questions: list[str]) -> None:
+        """Store the repository summary and its suggested questions."""
+        with self._connect() as conn, conn.transaction():
+            conn.execute(
+                "UPDATE repos SET summary = %s, suggested_questions = %s WHERE id = %s",
+                (summary, Jsonb(questions), repo_id),
+            )
+
     def active_snapshot(self, repo_id: int) -> Snapshot | None:
         """The repo's active snapshot, or None before its first successful index."""
         with self._connect() as conn, conn.cursor(row_factory=class_row(Snapshot)) as cur:
             return cur.execute(
-                "SELECT id, repo_id, commit_sha, branch, status FROM snapshots"
+                "SELECT id, repo_id, commit_sha, branch, status, indexed_at, stats FROM snapshots"
                 " WHERE repo_id = %s AND status = 'active'",
                 (repo_id,),
             ).fetchone()

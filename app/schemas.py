@@ -63,6 +63,38 @@ class RepoSearchResponse(BaseModel):
     items: list[RepoHitResponse]
 
 
+class SnapshotInfo(BaseModel):
+    """A repository's active snapshot: commit, branch, when it was indexed, and its stats."""
+
+    snapshot_id: int = Field(..., json_schema_extra={"example": 3})
+    commit_sha: str | None = Field(
+        None, json_schema_extra={"example": "3f1c2a9e8d7b6c5a4f3e2d1c0b9a8f7e6d5c4b3a"}
+    )
+    branch: str = Field(..., json_schema_extra={"example": "master"})
+    indexed_at: datetime | None = None
+    stats: dict[str, Any] = Field(
+        ..., json_schema_extra={"example": {"files": 212, "chunks": 1480, "seconds": 41.2}}
+    )
+
+
+class RepoResponse(BaseModel):
+    """An indexed repository: summary, suggested questions, and its active snapshot."""
+
+    repo_id: int = Field(..., json_schema_extra={"example": 1})
+    owner: str = Field(..., json_schema_extra={"example": "fastapi"})
+    name: str = Field(..., json_schema_extra={"example": "full-stack-fastapi-template"})
+    url: str = Field(
+        ..., json_schema_extra={"example": "https://github.com/fastapi/full-stack-fastapi-template"}
+    )
+    summary: str | None = Field(
+        None, json_schema_extra={"example": "A full-stack template: FastAPI backend, React UI."}
+    )
+    suggested_questions: list[str] | None = Field(
+        None, json_schema_extra={"example": ["Where is the login endpoint defined?"]}
+    )
+    snapshot: SnapshotInfo | None = None
+
+
 class IndexRequest(BaseModel):
     """A public GitHub repository URL, optionally ending in /tree/<branch>."""
 

@@ -226,7 +226,7 @@ class FakeLLM:
         max_tokens: int,
         timeout: float,
     ) -> Structured:
-        """The next scripted reply, else a plan whose query is the last user message."""
+        """The next scripted reply, else a canned summary or a plan of the last user message."""
         request = {
             "kind": "structured",
             "system": system,
@@ -240,6 +240,11 @@ class FakeLLM:
             reply = self._replies.pop(0)
             if isinstance(reply, Exception):
                 raise reply
+        elif "summary" in schema.get("properties", {}):
+            reply = {
+                "summary": "A fake summary of the repository.",
+                "questions": [f"Fake suggested question {i}?" for i in range(1, 5)],
+            }
         else:
             reply = {"query": messages[-1]["content"], "identifiers": [], "intent": "explain"}
         usage = Usage(
