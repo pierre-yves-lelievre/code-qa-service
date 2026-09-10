@@ -12,7 +12,7 @@ COPY web/ ./
 RUN npm run build
 
 # ── Stage 2: builder ──────────────────────────────────────────────────────────
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 WORKDIR /build
 
@@ -25,7 +25,7 @@ RUN uv sync --frozen --no-dev --no-install-project --python python3.12 \
     --link-mode=copy
 
 # ── Stage 3: runtime ──────────────────────────────────────────────────────────
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 # git is needed to shallow-clone the repositories being indexed
 RUN apt-get update \
