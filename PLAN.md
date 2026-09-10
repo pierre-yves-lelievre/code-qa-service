@@ -100,6 +100,17 @@ patterns all three grammars share); `.ts` and `.tsx` (tsx grammar) add `typescri
 tree-sitter's cancellation (`progress_callback`) segfaults in 0.25 and 0.26 and `parse()` holds
 the GIL, so files are bounded by `max_file_kb` and the Phase 4 job timeout.
 
+**tree-sitter is held at 0.25.2** (exact pin in `pyproject.toml`). 0.26.0 corrupts memory inside
+`file_symbols`: the process segfaults or bus-errors at a later allocation or GC, at random. A bare
+parse and the query matches alone are clean. The Phase 2/3 fixtures don't trigger it. It was found
+in Phase 4, indexing `pallets/markupsafe` at `b2e4d9c7687be25695fffbe93a37622302b24fb1`, on
+`src/markupsafe/__init__.py`. 0.26.0 crashed 6 of 6 replays, and 0.25.2 passed 6 of 6.
+Re-verify before accepting any bump:
+1. Shallow-clone that commit.
+2. Run `walk_files`, then `file_symbols` + `chunk_file` on each entry, with `python -X faulthandler`.
+3. Do it three times on the main thread and three times in a `threading.Thread`.
+The bump is fine only if every run exits 0.
+
 **Rules**: qualname = the module's dotted path (from `path`: extension stripped, `/` → `.`, a
 trailing `.__init__` or `.index` dropped) plus the chain of enclosing definitions, e.g.
 `backend.app.crud.authenticate`; the module row's qualname is the dotted path. A function whose
