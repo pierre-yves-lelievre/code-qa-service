@@ -26,6 +26,11 @@ def _row(rows: list[SymbolRow], qualname: str) -> SymbolRow:
 def test_language_for_maps_extensions_and_rejects_unknown():
     assert language_for("shop/models.py") == "python"
     assert language_for("SHOP/MODELS.PY") == "python"
+    assert language_for("src/types.d.ts") == "typescript"
+    assert language_for("src/button.tsx") == "tsx"
+    assert language_for("src/util.js") == "javascript"
+    assert language_for("src/view.jsx") == "javascript"
+    assert language_for("scripts/run.mjs") == "javascript"
     assert language_for("README.md") is None
     assert language_for("Makefile") is None
 
@@ -113,3 +118,97 @@ def test_package_init_module_row_takes_the_package_qualname():
             doc="The shop package.",
         )
     ]
+
+
+# ── TypeScript, TSX, JavaScript ───────────────────────────────────────────────
+
+
+def test_typescript_function_declaration_row_with_jsdoc():
+    add = _row(_parse("ts_app", "src/service.ts"), "src.service.add")
+    assert (add.kind, add.start_line, add.end_line) == ("function", 8, 10)
+    assert add.signature == "function add(a: number, b: number): number"
+    assert add.doc == "Adds two numbers."
+
+
+def test_typescript_class_and_method_rows():
+    rows = _parse("ts_app", "src/service.ts")
+    assert [(r.kind, r.qualname, r.start_line, r.end_line) for r in rows] == [
+        ("module", "src.service", 1, 29),
+        ("function", "src.service.add", 8, 10),
+        ("class", "src.service.OrderService", 16, 26),
+        ("method", "src.service.OrderService.place", 18, 21),
+        ("function", "src.service.OrderService.place.check", 19, 19),
+        ("method", "src.service.OrderService.count", 23, 25),
+        ("function", "src.service.double", 29, 29),
+    ]
+    service = _row(rows, "src.service.OrderService")
+    assert (service.signature, service.doc) == (
+        "class OrderService extends Base",
+        "Handles orders.\n@public",
+    )
+    place = _row(rows, "src.service.OrderService.place")
+    assert (place.signature, place.doc) == (
+        "async place(id: string): Promise<void>",
+        "Place an order.",
+    )
+    assert _row(rows, "src.service.OrderService.count").signature == "get count(): number"
+
+
+def test_arrow_function_assigned_to_const_is_a_function():
+    rows = _parse("ts_app", "src/service.ts")
+    double = _row(rows, "src.service.double")
+    assert (double.kind, double.signature, double.doc) == (
+        "function",
+        "const double = (n: number): number =>",
+        "Doubles a number.",
+    )
+    assert _row(rows, "src.service.OrderService.place.check").kind == "function"
+
+
+def test_jsdoc_heading_the_file_is_the_module_doc_only_when_detached():
+    assert _parse("ts_app", "src/service.ts")[0].doc == "Order service module."
+    assert _parse("ts_app", "src/util.js")[0].doc == "Utilities for scripts."
+
+    attached = file_symbols("a.ts", "/** Adds. */\nexport function add() {}\n", "typescript")
+    assert [(r.kind, r.doc) for r in attached.rows] == [("module", None), ("function", "Adds.")]
+
+
+def test_tsx_and_js_use_the_typescript_query():
+    tsx = _parse("ts_app", "src/button.tsx")
+    assert [(r.kind, r.qualname, r.doc) for r in tsx] == [
+        ("module", "src.button", None),
+        ("function", "src.button.Counter", "A counter button."),
+        ("function", "src.button.Label", None),
+    ]
+    js = _parse("ts_app", "src/util.js")
+    assert [(r.kind, r.qualname, r.signature) for r in js] == [
+        ("module", "src.util", None),
+        ("function", "src.util.ids", "function* ids()"),
+        ("class", "src.util.Cache", "class Cache"),
+        ("method", "src.util.Cache.get", "get(key)"),
+        ("function", "src.util.load", "const load = function ()"),
+    ]
+
+
+# ── Error recovery ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("repo", "path", "survivors"),
+    [
+        ("py_app", "shop/broken.py", {"shop.broken.total": (4, 5), "shop.broken.refund": (12, 13)}),
+        ("ts_app", "src/broken.ts", {"src.broken.before": (1, 3), "src.broken.after": (9, 11)}),
+    ],
+)
+def test_syntax_error_keeps_symbols_outside_the_error_region(
+    repo: str, path: str, survivors: dict[str, tuple[int, int]]
+):
+    result = file_symbols(path, (FIXTURES / repo / path).read_text(), language_for(path))
+    assert result.error_nodes > 0
+    spans = {r.qualname: (r.start_line, r.end_line) for r in result.rows}
+    assert survivors.items() <= spans.items()
+
+
+def test_clean_file_reports_no_error_nodes():
+    text = (FIXTURES / "py_app" / "shop" / "models.py").read_text()
+    assert file_symbols("shop/models.py", text, "python").error_nodes == 0
