@@ -82,7 +82,10 @@ export default function Sources({
   if (sources.length === 0) return null;
   return (
     <div>
-      <h3 className="caption">Sources ({sources.length})</h3>
+      <h3 className="caption">
+        {sources.some((source) => source.cited) ? "Sources" : "Retrieved, not cited"} (
+        {sources.length})
+      </h3>
       <ol className="mt-2 space-y-3">
         {sources.map((source, index) => {
           // A module chunk's lines are scattered through the file: it names and links the file.

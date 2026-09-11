@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.answering import FLOOR_NOTE, NO_CITATIONS_NOTE, NOT_FOUND
+from app.answering import CITE_NUDGE, FLOOR_NOTE, NO_CITATIONS_NOTE, NOT_FOUND
 from app.chunking import Chunk, chunk_file, estimate_tokens
 from app.config import Settings, settings
 from app.db import DatabaseStatus
@@ -683,18 +683,36 @@ def test_ask_answers_with_cited_sources_server_links_tokens_and_a_logged_query(
     assert sources[0]["commit_sha"] == sha and sources[0]["blocks"]
 
 
-def test_a_citation_to_a_source_that_was_not_briefed_is_dropped_and_noted(
+def test_a_stray_citation_is_dropped_and_after_one_retry_the_top_sources_are_listed_uncited(
     client, committed, mock_github, mock_llm, fixture_repo
 ):
     repo_id, _ = _indexed_py_app(client, mock_github, fixture_repo)
     stray = Citation(99, "nowhere.py:1-2", None, "x", 0, 1)
-    mock_llm(FakeLLM(completions=[Completion("It is in tax.py.", (stray,), Usage(10, 5))]))
+    uncited = Completion("It is in tax.py.", (stray,), Usage(10, 5))
+    llm = mock_llm(FakeLLM(completions=[uncited, uncited]))
     body = _ask(client, repo_id, TAX_QUESTION).json()
-    assert body["sources"] == []
+    first, retry = [r for r in llm.requests if r["kind"] == "complete"]
+    assert retry["messages"][-1]["content"] == [
+        *first["messages"][-1]["content"],
+        {"type": "text", "text": CITE_NUDGE},
+    ]
+    assert body["sources"] and len(body["sources"]) <= 3
+    assert not any(source["cited"] for source in body["sources"])  # retrieved, not cited
     assert body["notes"] == [
         "1 citation was dropped: not a source that was provided.",
         NO_CITATIONS_NOTE,
     ]
+
+
+def test_an_answer_without_citations_is_asked_once_more_and_a_cited_retry_stands(
+    client, committed, mock_github, mock_llm, fixture_repo
+):
+    repo_id, _ = _indexed_py_app(client, mock_github, fixture_repo)
+    llm = mock_llm(FakeLLM(completions=[Completion("It is in tax.py.", (), Usage(10, 5))]))
+    body = _ask(client, repo_id, TAX_QUESTION).json()
+    assert _kinds(llm) == ["structured", "complete", "complete"]
+    assert body["sources"] and all(source["cited"] for source in body["sources"])
+    assert body["notes"] == []
 
 
 def test_the_floor_only_adds_its_sentence_and_the_sentinel_decides_not_found(

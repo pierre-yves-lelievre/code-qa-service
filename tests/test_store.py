@@ -221,6 +221,25 @@ def test_symbol_ladder_stops_at_each_identifiers_first_rung(store):
     ]  # in identifier order
 
 
+def test_the_fourth_rung_finds_names_that_contain_an_identifier_after_the_exact_hits(
+    store, tmp_path: Path
+):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "esc.py").write_text("def escape_silent(s):\n    return s\n")
+    (tmp_path / "tests" / "test_esc.py").write_text("def test_escape_silent():\n    assert 1\n")
+    repo_id = store.upsert_repo("octo", "esc", "https://github.com/octo/esc")
+    snapshot_id = store.create_snapshot(repo_id, "main", "b" * 40)
+    store.add_files(snapshot_id, [_index_file(entry)[:2] for entry in walk_files(tmp_path)])
+
+    hits = store.symbol_search(snapshot_id, ["escape_silent"], 50)
+
+    assert [(h.name, h.path) for h in hits] == [
+        ("escape_silent", "src/esc.py"),  # the name rung first
+        ("test_escape_silent", "tests/test_esc.py"),  # then the name that contains it
+    ]
+
+
 def test_full_text_uses_and_first_then_falls_back_to_or(store):
     snapshot_id = _py_snapshot(store)
     hits, mode = store.text_search(snapshot_id, split_identifiers("tax_rate"), or_terms("x"), 50)

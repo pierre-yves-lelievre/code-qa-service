@@ -45,16 +45,27 @@ _MEMBERS = (
     " WHERE EXISTS (SELECT 1 FROM chunks c WHERE c.snapshot_id = %s AND " + _MATCHES + ")"
     " ORDER BY u.ord"
 )
+CONTAINS_LIMIT = 20  # rung 4: names that contain an identifier, after every exact hit
+# Rungs 1-3 keep each identifier at its first exact rung. Rung 4 adds names that contain it
+# (test_escape_silent for escape_silent) whatever the exact rungs found; position(), not LIKE,
+# for the same `_` reason as above; shorter names first.
 _SYMBOLS = (
     "WITH m AS (SELECT c.id, u.ord,"
     " CASE WHEN c.qualname = u.x THEN 1 WHEN c.name = u.x THEN 2 ELSE 3 END AS rung"
-    " FROM unnest(%s::text[]) WITH ORDINALITY AS u(x, ord)"
-    " JOIN chunks c ON c.snapshot_id = %s AND " + _MATCHES + "),"
+    " FROM unnest(%(ids)s::text[]) WITH ORDINALITY AS u(x, ord)"
+    " JOIN chunks c ON c.snapshot_id = %(snapshot)s AND " + _MATCHES + "),"
     " kept AS (SELECT id, ord, rung FROM"
     " (SELECT *, min(rung) OVER (PARTITION BY ord) AS top FROM m) r WHERE rung = top),"
-    " best AS (SELECT DISTINCT ON (id) id, ord, rung FROM kept ORDER BY id, ord) "
+    " exact AS (SELECT DISTINCT ON (id) id, ord, rung FROM kept ORDER BY id, ord),"
+    " contains AS (SELECT c.id, min(u.ord) AS ord, 4 AS rung"
+    " FROM unnest(%(ids)s::text[]) WITH ORDINALITY AS u(x, ord)"
+    " JOIN chunks c ON c.snapshot_id = %(snapshot)s"
+    " AND position(u.x IN c.name) > 0 AND c.name <> u.x"
+    " WHERE c.id NOT IN (SELECT id FROM exact)"
+    " GROUP BY c.id ORDER BY min(u.ord), length(c.name), c.id LIMIT %(contains)s),"
+    " best AS (SELECT id, ord, rung FROM exact UNION ALL SELECT id, ord, rung FROM contains) "
     + _HIT + ", 1.0::float8 / b.rung AS score" + _FROM + " JOIN best b ON b.id = c.id"
-    " ORDER BY b.ord, b.rung, f.path, c.start_line, c.part LIMIT %s"
+    " ORDER BY b.rung = 4, b.ord, b.rung, f.path, c.start_line, c.part LIMIT %(limit)s"
 )  # fmt: skip
 _FTS_AND = (
     _HIT + ", ts_rank_cd(c.tsv, q) AS score" + _FROM + ", plainto_tsquery('simple', %s) AS q"
@@ -262,10 +273,17 @@ class ChunkStore:
         return [x for (x,) in rows]
 
     def symbol_search(self, snapshot_id: int, identifiers: list[str], limit: int) -> list[Hit]:
-        """The ladder per identifier (qualname, name, dotted suffix), each at its first rung."""
+        """The ladder per identifier (qualname, name, dotted suffix), each at its first rung;
+        then names that contain an identifier, at most CONTAINS_LIMIT of them."""
+        params = {
+            "ids": identifiers,
+            "snapshot": snapshot_id,
+            "contains": CONTAINS_LIMIT,
+            "limit": limit,
+        }
         with self._connect() as conn, conn.transaction():
             with conn.cursor(row_factory=class_row(Hit)) as cur:
-                return cur.execute(_SYMBOLS, (identifiers, snapshot_id, limit)).fetchall()
+                return cur.execute(_SYMBOLS, params).fetchall()
 
     def text_search(
         self, snapshot_id: int, text: str, terms: list[str], limit: int

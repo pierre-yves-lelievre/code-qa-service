@@ -42,6 +42,14 @@ const MARKDOWN_STYLE =
 // When the answer ends in a paragraph, that paragraph flows inline so the chips close it.
 const CHIPS_INLINE = "[&>p:nth-last-child(2)]:inline";
 
+/** Escape `__` outside code fences and spans, so a dunder like __html__ is not rendered bold. */
+function escapeDunders(markdown: string): string {
+  return markdown
+    .split(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/)
+    .map((part, i) => (i % 2 === 1 ? part : part.replaceAll("__", "\\_\\_")))
+    .join("");
+}
+
 const ICON = "size-4 shrink-0";
 
 // A suggested question, in the sidebar and in the empty chat.
@@ -183,7 +191,7 @@ function Answer({
   anchor: string;
   onAskAbout: (question: string) => void;
 }) {
-  const cited = response.sources.length > 0;
+  const cited = response.sources.some((source) => source.cited);
   return (
     <div className="space-y-4">
       {response.not_found && (
@@ -193,7 +201,7 @@ function Answer({
       )}
       <div className={`${MARKDOWN_STYLE} ${cited ? CHIPS_INLINE : ""}`}>
         <Markdown skipHtml allowedElements={ALLOWED_ELEMENTS} unwrapDisallowed>
-          {response.answer}
+          {escapeDunders(response.answer)}
         </Markdown>
         {cited && (
           <span className="ml-1.5 inline-flex flex-wrap gap-1 align-[1px]">

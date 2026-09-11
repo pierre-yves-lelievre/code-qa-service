@@ -33,7 +33,7 @@ SYSTEM = (
     " Prefer precise references: file, symbol, lines. Answer in a few short paragraphs. State"
     " what the code does and where. Never reproduce more than one line of code; name the file"
     " and function and let the source cards show the code. Expand only when the question asks"
-    " for detail."
+    " for detail. Wrap every identifier, including dunder names like `__html__`, in backticks."
 )
 NOT_FOUND = "Not found in the indexed code"
 FLOOR_NOTE = (
@@ -42,6 +42,8 @@ FLOOR_NOTE = (
 )
 INDEX_HEADER = "Other code that may be relevant, not provided in full (path :: symbol — signature):"
 NO_CITATIONS_NOTE = "The answer cites no sources."
+CITE_NUDGE = "Cite the sources for each claim."
+UNCITED_SOURCES = 3  # top retrieved sources listed when the answer still cites none
 TRUNCATED_NOTE = "The answer was cut off at the token limit."
 EXPAND_TOKENS = 4_000
 EXCERPT_LINES, EXCERPT_CHARS = 12, 800
@@ -96,6 +98,7 @@ class Source:
     title: str
     blocks: tuple[Block, ...]
     commit_sha: str
+    cited: bool = True  # False: a top retrieved source, listed because the answer cited none
 
 
 @dataclass(frozen=True)
@@ -232,6 +235,13 @@ def brief(
         content.append({"type": "text", "text": _index_lines(index)})
     messages.append({"role": "user", "content": content})
     return Briefing(system, messages, (*sources, *full))
+
+
+def _nudged(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The messages with the citation nudge appended to the last user turn."""
+    *earlier, last = messages
+    nudge = {"type": "text", "text": CITE_NUDGE}
+    return [*earlier, {**last, "content": [*last["content"], nudge]}]
 
 
 def _search_result(source: Briefed) -> dict[str, Any]:
@@ -413,21 +423,33 @@ def ask(
         floor = found.no_relevant_sources
         briefing = brief(question, context, history, full, index_hits, floor)
         clock = time.monotonic()
+        messages = briefing.messages
         try:
-            completion = llm.complete(
-                briefing.system,
-                briefing.messages,
-                settings.answer_max_tokens,
-                settings.answer_timeout_s,
-            )
+            for _ in range(2):  # an answer that cites nothing is asked once more
+                completion = llm.complete(
+                    briefing.system,
+                    messages,
+                    settings.answer_max_tokens,
+                    settings.answer_timeout_s,
+                )
+                usage = _sum(usage, completion.usage)
+                text = completion.text.strip() or f"{NOT_FOUND}."
+                checked = check(replace(completion, text=text), briefing.sources, repo.url, True)
+                if checked.sources or checked.not_found:
+                    break
+                messages = _nudged(briefing.messages)
         except ProviderError:
             llm_ms = _ms(clock)
             record(None, [], False)
             raise
         llm_ms = _ms(clock)
-        usage = _sum(usage, completion.usage)
-        text = completion.text.strip() or f"{NOT_FOUND}."
-        checked = check(replace(completion, text=text), briefing.sources, repo.url, True)
+        if not checked.sources and not checked.not_found:
+            # Still uncited: show what was retrieved, flagged, rather than nothing.
+            listed = [
+                replace(_source(b, set(b.blocks), repo.url), cited=False)
+                for b in full[:UNCITED_SOURCES]
+            ]
+            checked = replace(checked, sources=listed)
     else:  # nothing to cite: no call
         text, checked = f"{NOT_FOUND}.", Checked([], True, [])
     query_id = record(text, checked.sources, checked.not_found)

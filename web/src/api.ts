@@ -107,6 +107,7 @@ export interface Source {
   tier: Tier | null;
   excerpt: string;
   github_url: string;
+  cited: boolean;
 }
 
 export interface LegTrace {

@@ -341,7 +341,7 @@ candidate identifiers are the tokens (plus the planner's list) that exist as `na
 in the active snapshot (`WHERE name = ANY(%s) OR qualname = ANY(%s)`). No regex.
 
 **Queries**: symbol ladder over the candidates (`qualname =`, `name =`, `qualname LIKE '%.' || x`,
-stop at first hit); full text via `plainto_tsquery('simple', split_identifiers(query))` ranked by
+stop at first hit; then up to 20 names that contain a candidate); full text via `plainto_tsquery('simple', split_identifiers(query))` ranked by
 `ts_rank_cd`; vector via `<=>` on the embedded query with `LIMIT 20`. All scoped to the active
 snapshot. **Each leg fails independently**: an exception in one leg logs, marks that leg
 `unavailable` in the trace, and the others proceed.
@@ -380,7 +380,8 @@ that chunk first. Semantic quality is measured only by `make eval` with real key
   - A member is a `name`, a `qualname`, or a dotted `qualname` suffix. The suffix is compared
     with `right()`, because `LIKE` would treat `_` as a wildcard.
 - *Legs*:
-  - Symbol: at most 50, each member at its first rung.
+  - Symbol: at most 50, each member at its first rung, then up to 20 names that contain a member
+    (`position()`, ranked after every exact hit): `escape_silent` finds `test_escape_silent`.
   - Full text: at most 50. AND via `plainto_tsquery` runs first, falling back to OR over
     alphanumeric terms (`or_fallback` in the trace).
   - Vector: at most 20, with `hnsw.iterative_scan = strict_order`, because the HNSW index spans
@@ -481,6 +482,10 @@ suggested questions, stored on `repos`. Best-effort; failure leaves it null.
   - The cited blocks narrow the lines.
   - `not_found` is set by no sources or by the model's sentinel at the start of the answer (a
     partial answer may name what is missing further down); the floor only adds its sentence.
+  - An answer that cites nothing while sources were briefed is asked once more, with "Cite the
+    sources for each claim." appended to the user turn; if it still cites nothing, the top three
+    retrieved sources are returned with `cited: false` and the UI lists them as "Retrieved, not
+    cited".
 - *Summary*:
   - It is a structured call over the top-level README (capped at 24 KB) and the top-level tree.
   - It runs after embedding and before activation. A failure writes nothing and shows in the

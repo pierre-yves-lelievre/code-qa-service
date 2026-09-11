@@ -111,7 +111,7 @@ class AskRequest(BaseModel):
 
 
 class SourceResponse(BaseModel):
-    """A cited source; the link is built by the server from path, lines and commit sha."""
+    """A source of the answer; the link is built by the server from path, lines and commit sha."""
 
     path: str = Field(..., json_schema_extra={"example": "backend/app/api/routes/login.py"})
     start_line: int = Field(..., json_schema_extra={"example": 21})
@@ -130,6 +130,11 @@ class SourceResponse(BaseModel):
             "example": "https://github.com/fastapi/full-stack-fastapi-template/blob/"
             "3f1c2a9e8d7b6c5a4f3e2d1c0b9a8f7e6d5c4b3a/backend/app/api/routes/login.py#L21-L38"
         },
+    )
+    cited: bool = Field(
+        True,
+        description="False when the answer cited nothing and this is a top retrieved source.",
+        json_schema_extra={"example": True},
     )
 
 
