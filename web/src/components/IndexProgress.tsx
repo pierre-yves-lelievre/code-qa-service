@@ -56,6 +56,22 @@ const GITHUB = (
   </svg>
 );
 
+// GitHub's language colours, except Python, which takes its logo yellow so it never sits as a
+// second blue beside TypeScript; "text" is indexing.py's windowed, no-parser bucket.
+const LANGUAGE_COLORS: Record<string, string> = {
+  python: "#F2B233",
+  typescript: "#3178C6",
+  tsx: "#61DAFB",
+  javascript: "#F1E05A",
+  text: "#CBD5E1",
+};
+const SPARE_COLORS = ["#A78BFA", "#F472B6", "#34D399", "#FB923C"];
+
+/** A language's colour in the bar and the table; unknown ones take a spare, in order. */
+function languageColor(language: string, index: number): string {
+  return LANGUAGE_COLORS[language] ?? SPARE_COLORS[index % SPARE_COLORS.length];
+}
+
 /** A count with thousands separators, or a dash when the server did not send it. */
 function fmt(value: number | undefined): string {
   return value === undefined ? "–" : value.toLocaleString();
@@ -124,9 +140,9 @@ function Progress({
   return (
     <section className="panel p-6">
       <p className="caption">Indexing</p>
-      <h2 className="mt-1 text-lg font-semibold break-all text-slate-900">
+      <h2 className="mt-1 font-display text-3xl leading-tight break-all text-slate-900">
         {job.owner}/{job.name}{" "}
-        <span className="font-mono text-sm font-normal text-slate-500">@ {job.branch}</span>
+        <span className="font-mono text-sm text-slate-500">@ {job.branch}</span>
       </h2>
       {status === "failed" ? (
         <p className="error-note mt-5">{state?.error ?? "The index job failed."}</p>
@@ -296,7 +312,19 @@ function Summary({
       {languages.length > 0 && (
         <div>
           <h3 className="caption">Languages</h3>
-          <table className="mt-2 w-full table-fixed text-sm">
+          <div className="mt-3 flex h-2 gap-px overflow-hidden rounded-full bg-slate-100">
+            {languages.map(([language, row], index) => (
+              <div
+                key={language}
+                title={`${language === "text" ? "other" : language}: ${row.files} files`}
+                style={{
+                  width: `${(row.files / languages.reduce((sum, [, r]) => sum + r.files, 0)) * 100}%`,
+                  backgroundColor: languageColor(language, index),
+                }}
+              />
+            ))}
+          </div>
+          <table className="mt-3 w-full table-fixed text-sm">
             <thead className="text-left text-xs text-slate-400">
               <tr>
                 <th className="py-1 font-normal">Language</th>
@@ -306,10 +334,14 @@ function Summary({
               </tr>
             </thead>
             <tbody className="tabular-nums">
-              {languages.map(([language, row]) => (
+              {languages.map(([language, row], index) => (
                 <tr key={language} className="border-t border-slate-100">
                   {/* "text" is indexing.py's key for files windowed without a parser. */}
                   <td className="truncate py-1.5 text-slate-700">
+                    <span
+                      className="mr-2 inline-block size-2 rounded-full align-middle"
+                      style={{ backgroundColor: languageColor(language, index) }}
+                    />
                     {language === "text" ? "other" : language}
                   </td>
                   <td className="py-1.5 text-right">{fmt(row.files)}</td>

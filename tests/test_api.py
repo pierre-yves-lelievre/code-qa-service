@@ -705,6 +705,21 @@ def test_a_question_the_floor_rejects_is_not_found_and_the_request_says_so(
     assert {"type": "text", "text": FLOOR_NOTE} in answer["messages"][-1]["content"]
 
 
+def test_the_briefing_honours_the_full_hits_and_index_lines_settings(
+    client, committed, mock_github, mock_llm, fixture_repo, monkeypatch: pytest.MonkeyPatch
+):
+    repo_id, _ = _indexed_py_app(client, mock_github, fixture_repo)
+    monkeypatch.setattr("app.config.settings.answer_full_hits", 1)
+    monkeypatch.setattr("app.config.settings.answer_index_lines", 2)
+    llm = mock_llm(FakeLLM())
+    assert _ask(client, repo_id, TAX_QUESTION).status_code == 200
+    _, answer = llm.requests
+    content = answer["messages"][-1]["content"]
+    assert sum(block["type"] == "search_result" for block in content) == 1
+    index_block = content[-1]["text"].splitlines()
+    assert len(index_block) == 1 + 2  # the header, then two index lines
+
+
 def test_with_nothing_retrieved_no_answer_call_is_made(
     client, committed, mock_github, mock_llm, fixture_repo, monkeypatch: pytest.MonkeyPatch
 ):

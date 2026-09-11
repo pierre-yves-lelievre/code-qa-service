@@ -4,19 +4,23 @@ import Chat from "./components/Chat";
 import IndexProgress from "./components/IndexProgress";
 import RepoSearch from "./components/RepoSearch";
 
-// The product mark: an accent tile with a code glyph; the favicon in index.html is the same.
+// The product mark: a code glyph on an indigo-to-violet tile; the favicon is the same glyph.
 const MARK = (
-  <svg viewBox="0 0 32 32" className="size-8 shrink-0" aria-hidden="true">
-    <rect width="32" height="32" rx="8" className="fill-accent" />
-    <path
-      d="M13 11l-5 5 5 5M19 11l5 5-5 5"
-      fill="none"
-      stroke="white"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </svg>
+  <span
+    className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-indigo-500 to-violet-600 shadow-sm shadow-indigo-500/30"
+    aria-hidden="true"
+  >
+    <svg viewBox="6 6 20 20" className="size-5">
+      <path
+        d="M13 11l-5 5 5 5M19 11l5 5-5 5"
+        fill="none"
+        stroke="white"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  </span>
 );
 
 /** The repository id in `?repo=`, or null. */
@@ -103,8 +107,8 @@ export default function App() {
           <div className="flex min-w-0 items-center gap-3">
             {MARK}
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-900">Code Q&amp;A</p>
-              <p className="hidden truncate text-xs text-slate-500 sm:block">
+              <p className="font-display text-2xl leading-none text-slate-900">Code Q&amp;A</p>
+              <p className="mt-0.5 hidden truncate text-xs text-slate-500 sm:block">
                 Ask questions about a public GitHub repository; answers cite the code.
               </p>
             </div>

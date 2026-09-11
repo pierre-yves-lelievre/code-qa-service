@@ -47,7 +47,46 @@ function Rows({ title, rows }: { title: string; rows: [string, string | number][
   );
 }
 
-/** How the answer was made: retrievers and planner, timings, tokens and the snapshot. */
+/** Where the time went: one proportional bar (plan, embed, retrieve, llm) and its legend. */
+function TimingBar({ timings }: { timings: AskResponse["timings"] }) {
+  // The query embedding happens inside retrieve, so retrieve's segment is the rest of it.
+  const segments: [string, number, string][] = [
+    ["plan", timings.plan_ms, "bg-slate-300"],
+    ["embed", timings.embed_ms, "bg-slate-400"],
+    ["retrieve", Math.max(0, timings.retrieve_ms - timings.embed_ms), "bg-slate-500"],
+    ["llm", timings.llm_ms, "bg-slate-700"],
+  ];
+  const spent = segments.reduce((sum, [, ms]) => sum + ms, 0);
+  if (spent === 0) return null;
+  return (
+    <div className="sm:col-span-2">
+      <div className="flex h-2 gap-px overflow-hidden rounded-full bg-slate-100">
+        {segments.map(
+          ([label, ms, color]) =>
+            ms > 0 && (
+              <div
+                key={label}
+                className={color}
+                style={{ width: `${(ms / spent) * 100}%` }}
+                title={`${label} ${ms.toLocaleString()} ms`}
+              />
+            ),
+        )}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-slate-500">
+        {segments.map(([label, ms, color]) => (
+          <span key={label} className="inline-flex items-center gap-1.5">
+            <span className={`size-2 rounded-sm ${color}`} />
+            {label}
+            <span className="text-slate-800 tabular-nums">{ms.toLocaleString()} ms</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** How the answer was made: the timing bar, retrievers and planner, timings, tokens, snapshot. */
 export default function Trace({ response }: { response: AskResponse }) {
   const { retrievers, timings, tokens, snapshot } = response;
   const legs: [Tier, LegTrace][] = [
@@ -64,6 +103,7 @@ export default function Trace({ response }: { response: AskResponse }) {
         </span>
       </summary>
       <div className="grid items-start gap-x-8 gap-y-5 border-t border-slate-100 px-3 py-3 text-xs sm:grid-cols-2">
+        <TimingBar timings={timings} />
         <table className="w-full table-fixed">
           <caption className="caption mb-1 text-left">Retrievers</caption>
           <thead className="text-left text-slate-400">

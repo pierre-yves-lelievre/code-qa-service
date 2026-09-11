@@ -34,8 +34,8 @@ const MARKDOWN_STYLE =
   "[&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.85em] [&_h1]:text-base " +
   "[&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:font-semibold " +
   "[&_h4]:font-semibold [&_hr]:border-slate-200 [&_li]:mt-1 [&_ol]:list-decimal [&_ol]:pl-5 " +
-  "[&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-slate-50 [&_pre]:p-3 " +
-  "[&_pre]:leading-relaxed [&_pre]:ring-1 [&_pre]:ring-slate-200 [&_pre_code]:bg-transparent " +
+  "[&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-slate-900 [&_pre]:p-3 " +
+  "[&_pre]:leading-relaxed [&_pre]:text-slate-100 [&_pre_code]:bg-transparent " +
   "[&_pre_code]:p-0 [&_strong]:font-semibold [&_strong]:text-slate-900 [&_ul]:list-disc " +
   "[&_ul]:pl-5";
 
@@ -43,24 +43,28 @@ const ICON = "size-4 shrink-0";
 
 // A suggested question, in the sidebar and in the empty chat.
 const SUGGESTION =
-  "flex h-full w-full items-start gap-2.5 rounded-lg bg-white px-3 py-2.5 text-left text-sm " +
-  "text-slate-700 ring-1 ring-slate-200 transition-colors hover:bg-accent-soft hover:text-slate-900 " +
+  "lift flex h-full w-full items-start gap-2.5 rounded-lg bg-white px-3 py-2.5 text-left text-sm " +
+  "text-slate-700 ring-1 ring-slate-200 hover:bg-accent-soft hover:text-slate-900 " +
   "hover:ring-indigo-200 focus-visible:outline-2 focus-visible:outline-accent " +
   "disabled:pointer-events-none disabled:opacity-50";
 
 // The header's mark (App.tsx), smaller: it stands for the assistant.
 const MARK = (
-  <svg viewBox="0 0 32 32" className="size-7 shrink-0" aria-hidden="true">
-    <rect width="32" height="32" rx="8" className="fill-accent" />
-    <path
-      d="M13 11l-5 5 5 5M19 11l5 5-5 5"
-      fill="none"
-      stroke="white"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </svg>
+  <span
+    className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-indigo-500 to-violet-600 shadow-sm shadow-indigo-500/30"
+    aria-hidden="true"
+  >
+    <svg viewBox="6 6 20 20" className="size-4">
+      <path
+        d="M13 11l-5 5 5 5M19 11l5 5-5 5"
+        fill="none"
+        stroke="white"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  </span>
 );
 
 const SEND = (
@@ -104,8 +108,8 @@ interface Turn {
   error: string | null;
 }
 
-/** One answer: a not-found badge, the markdown, notes, then its sources and trace. */
-function Answer({ response }: { response: AskResponse }) {
+/** One answer: a not-found badge, the markdown, citation chips, notes, its sources and trace. */
+function Answer({ response, anchor }: { response: AskResponse; anchor: string }) {
   return (
     <div className="space-y-4">
       {response.not_found && (
@@ -118,6 +122,22 @@ function Answer({ response }: { response: AskResponse }) {
           {response.answer}
         </Markdown>
       </div>
+      {response.sources.length > 0 && (
+        <p className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+          <span className="mr-0.5">Cited</span>
+          {response.sources.map((source, index) => (
+            // An in-page anchor to the card below; never a URL from the model.
+            <a
+              key={`${source.path}:${source.start_line}`}
+              href={`#${anchor}-${index + 1}`}
+              title={source.path}
+              className="rounded-md bg-white px-1.5 py-0.5 font-mono text-slate-700 ring-1 ring-slate-200 transition-colors hover:bg-accent-soft hover:text-accent hover:ring-indigo-200"
+            >
+              [{index + 1}]
+            </a>
+          ))}
+        </p>
+      )}
       {response.notes.length > 0 && (
         <ul className="space-y-1 text-xs text-slate-500">
           {response.notes.map((note) => (
@@ -125,7 +145,7 @@ function Answer({ response }: { response: AskResponse }) {
           ))}
         </ul>
       )}
-      <Sources sources={response.sources} />
+      <Sources sources={response.sources} anchor={anchor} />
       <Trace response={response} />
     </div>
   );
@@ -220,8 +240,8 @@ export default function Chat({ repo, aside }: { repo: RepoResponse; aside: React
       <section className="panel flex min-h-[36rem] flex-col">
         <div className="flex items-center justify-between gap-4 border-b border-slate-100 px-5 py-3.5">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-slate-900">Chat</h2>
-            <p className="truncate text-xs text-slate-500">
+            <h2 className="font-display text-2xl leading-none text-slate-900">Chat</h2>
+            <p className="mt-1 truncate text-xs text-slate-500">
               About {repo.owner}/{repo.name}
             </p>
           </div>
@@ -236,10 +256,10 @@ export default function Chat({ repo, aside }: { repo: RepoResponse; aside: React
           {turns.length === 0 ? (
             <div className="flex h-full min-h-64 flex-col items-center justify-center text-center">
               {MARK}
-              <p className="mt-3 text-sm font-medium text-slate-900">
+              <p className="mt-4 font-display text-3xl leading-tight text-slate-900">
                 Ask about {repo.owner}/{repo.name}
               </p>
-              <p className="mt-1 max-w-sm text-sm text-slate-500">
+              <p className="mt-2 max-w-sm text-sm text-slate-500">
                 Answers cite the files and lines they come from. Try one of these, or write your own
                 below.
               </p>
@@ -269,7 +289,7 @@ export default function Chat({ repo, aside }: { repo: RepoResponse; aside: React
                     {MARK}
                     <div className="min-w-0 flex-1">
                       {turn.response ? (
-                        <Answer response={turn.response} />
+                        <Answer response={turn.response} anchor={`turn-${index + 1}-source`} />
                       ) : turn.error ? (
                         <p className="error-note">{turn.error}</p>
                       ) : (

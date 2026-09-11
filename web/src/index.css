@@ -1,13 +1,40 @@
 @import "tailwindcss";
 
-/* One accent (indigo); every other colour on the page is a neutral, a tier, or an error. */
+/* Vendored OFL fonts: web/public/fonts, licences beside them. Nothing is fetched from a CDN. */
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("/fonts/InstrumentSerif-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/JetBrainsMono-Variable.ttf") format("truetype");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* One accent (indigo); every other colour is a neutral, a tier, a language, or an error. */
 @theme {
+  --font-display: "Instrument Serif", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --color-accent: oklch(51.1% 0.262 276.966);
   --color-accent-strong: oklch(45.7% 0.24 277.023);
   --color-accent-soft: oklch(96.2% 0.018 272.314);
+  /* The retrieval tiers, as the code panels' left border; the badges use the same hues. */
+  --color-tier-symbol: oklch(69.6% 0.17 162.48);
+  --color-tier-fts: oklch(76.9% 0.188 70.08);
+  --color-tier-vector: oklch(68.5% 0.169 237.323);
 }
 
 @layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
   button:not(:disabled),
   summary {
     cursor: pointer;
@@ -54,8 +81,13 @@
     @apply text-accent underline-offset-2 transition-colors hover:text-accent-strong hover:underline;
   }
 
+  /* Hover lift for things you pick: result rows, question and example chips. */
+  .lift {
+    @apply transition duration-150 hover:-translate-y-px hover:shadow-md;
+  }
+
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-white shadow-md shadow-indigo-600/25 transition hover:bg-accent-strong hover:shadow-lg hover:shadow-indigo-600/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none;
   }
 
   .btn-secondary {
@@ -64,5 +96,20 @@
 
   .input {
     @apply w-full rounded-lg bg-white px-3 py-2 text-sm text-slate-900 shadow-sm ring-1 ring-slate-300 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-accent;
+  }
+
+  /* The hero's backdrop: a soft indigo-to-violet wash, and a faint grid fading out at the edges. */
+  .hero-wash {
+    background:
+      radial-gradient(42rem 24rem at 50% 0%, oklch(58.5% 0.233 277.117 / 0.16), transparent 70%),
+      radial-gradient(30rem 20rem at 72% 12%, oklch(60.6% 0.25 292.717 / 0.12), transparent 70%);
+  }
+
+  .hero-grid {
+    background-image:
+      linear-gradient(to right, oklch(70.4% 0.04 256.788 / 0.16) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(70.4% 0.04 256.788 / 0.16) 1px, transparent 1px);
+    background-size: 40px 40px;
+    mask-image: radial-gradient(ellipse 60% 55% at 50% 30%, black, transparent 75%);
   }
 }
