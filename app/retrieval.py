@@ -15,7 +15,7 @@ from app.logging_setup import get_logger
 
 if TYPE_CHECKING:
     from app.embeddings import FakeEmbeddings, VoyageEmbeddings
-    from app.planning import Intent, Plan
+    from app.planning import Plan
     from app.store import ChunkStore
 
 log = get_logger(__name__)
@@ -28,9 +28,6 @@ FTS_LIMIT = 50
 VECTOR_LIMIT = 20
 MAX_CANDIDATES = 32
 RRF_K = 60
-FULL_HITS = 12
-INDEX_HITS = 30
-ENUMERATE_INDEX_HITS = 60
 
 
 @dataclass(frozen=True)
@@ -65,10 +62,9 @@ class Legs:
 
 @dataclass(frozen=True)
 class Retrieval:
-    """What the answerer gets: full hits, the compact index, the floor verdict, the trace."""
+    """What the answerer gets: the fused hits in rank order, the floor verdict, the trace."""
 
-    full: list[Hit]
-    index: list[Hit]
+    hits: list[Hit]
     no_relevant_sources: bool
     legs: dict[Leg, dict[str, Any]]
     identifiers: tuple[str, ...]
@@ -240,9 +236,9 @@ def retrieve(
     store: "ChunkStore",
     embeddings: "VoyageEmbeddings | FakeEmbeddings",
 ) -> Retrieval:
-    """Search every leg, fuse, collapse parts, split full hits from the index, apply the floor."""
+    """Search every leg, fuse, collapse parts, apply the floor; the answerer splits the hits."""
     legs = search_legs(plan, snapshot_id, store, embeddings)
-    full, index = split_hits(collapse_parts(rrf(legs.hits)), plan.intent)
+    hits = collapse_parts(rrf(legs.hits))
     and_hits = legs.hits["fts"] if legs.trace["fts"]["status"] == "ok" else []
     vector = legs.hits["vector"]
     no_relevant = apply_floor(
@@ -253,13 +249,12 @@ def retrieve(
     )
     log.info(
         "retrieval_done",
-        full=len(full),
-        index=len(index),
+        hits=len(hits),
         no_relevant_sources=no_relevant,
         **{leg: trace["status"] for leg, trace in legs.trace.items()},
     )
     return Retrieval(
-        full, index, no_relevant, legs.trace, legs.identifiers, legs.embed_tokens, legs.embed_ms
+        hits, no_relevant, legs.trace, legs.identifiers, legs.embed_tokens, legs.embed_ms
     )
 
 
@@ -302,10 +297,9 @@ def _group(hit: Hit) -> tuple[Any, ...]:
     return ("chunk", hit.id)
 
 
-def split_hits(fused: list[Hit], intent: "Intent") -> tuple[list[Hit], list[Hit]]:
-    """The full hits, then the compact index: 30 entries, or 60 for an enumerate question."""
-    size = ENUMERATE_INDEX_HITS if intent == "enumerate" else INDEX_HITS
-    return fused[:FULL_HITS], fused[FULL_HITS : FULL_HITS + size]
+def split_hits(fused: list[Hit], full: int, index: int) -> tuple[list[Hit], list[Hit]]:
+    """The first `full` hits, then up to `index` more for the compact index."""
+    return fused[:full], fused[full : full + index]
 
 
 def apply_floor(

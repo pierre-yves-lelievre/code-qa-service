@@ -317,7 +317,7 @@ def score(
     except ServiceError as exc:
         print(f"case {case.id}: {exc.code}: {exc}", file=sys.stderr)
         return Result(case, "error")
-    ranked = rank(found.full, case.expect)
+    ranked = rank(found.hits, case.expect)
     outcome: Outcome = "hit" if ranked else "absent" if case.id in absent else "miss"
     return Result(
         case,

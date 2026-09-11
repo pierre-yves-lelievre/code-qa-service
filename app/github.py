@@ -43,6 +43,7 @@ PRUNED_DIRS = frozenset(
 IGNORED_FILES = (
     "*.min.js", "*.min.css", "*.map",
     "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "uv.lock", "cargo.lock",
+    "bun.lock", "bun.lockb", "go.sum", "gemfile.lock", "composer.lock", "pipfile.lock", "pdm.lock",
     ".env", ".env.*", "*.pem", "*.key", "id_rsa*",
 )  # fmt: skip
 KEPT_FILES = frozenset({".env.example"})

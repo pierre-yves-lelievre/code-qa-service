@@ -245,6 +245,15 @@ def test_walk_prunes_build_dirs_and_records_skip_reasons(
     }
 
 
+def test_lockfiles_of_other_ecosystems_are_skipped_as_ignored(tmp_path: Path):
+    names = ["bun.lock", "bun.lockb", "go.sum", "Gemfile.lock", "composer.lock", "Pipfile.lock"]
+    names.append("pdm.lock")
+    root = tmp_path / "clone"
+    _write(root, {name: b"x\n" for name in names} | {"go.mod": b"module octo\n"})
+    skipped = {e.path: e.skip_reason for e in walk_files(root)}
+    assert skipped == dict.fromkeys(names, "ignored") | {"go.mod": None}
+
+
 def test_walk_skips_symlinks_to_files_and_dirs_outside_the_clone(tmp_path: Path):
     root, outside = tmp_path / "clone", tmp_path / "outside"
     _write(root, {"app.py": b"x = 1\n"})

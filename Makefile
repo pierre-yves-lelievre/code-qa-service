@@ -8,8 +8,10 @@ db:
 	docker compose exec -T db psql -U postgres -v ON_ERROR_STOP=1 \
 		-f /docker-entrypoint-initdb.d/10-codeqa-test.sql
 
+# Watch app/ only: clones land in data/clones, and a reload there would stall every request
+# until the running index job finishes.
 run:
-	uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+	uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
 
 test:
 	uv run pytest

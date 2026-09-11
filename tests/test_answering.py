@@ -30,7 +30,7 @@ from app.answering import (
     to_briefed,
 )
 from app.llm import Citation, Completion, Usage
-from app.retrieval import ENUMERATE_INDEX_HITS, Hit, split_hits
+from app.retrieval import Hit, split_hits
 from app.store import StoredTurn
 
 SHA = "c" * 40
@@ -198,10 +198,10 @@ def test_index_lines_fall_back_from_qualname_to_name_to_path(hit: Hit, line: str
 
 def test_an_enumerate_question_briefs_sixty_index_lines():
     fused = [_hit(i, qualname=f"m.f{i}") for i in range(100)]
-    full, index = split_hits(fused, "enumerate")
+    full, index = split_hits(fused, 12, 60)
     briefed = [to_briefed([h], SHA) for h in full]
     content = brief("list them", CONTEXT, [], briefed, index, floor=False).messages[-1]["content"]
-    assert len(content[-1]["text"].splitlines()) == 1 + ENUMERATE_INDEX_HITS
+    assert len(content[-1]["text"].splitlines()) == 1 + 60
 
 
 # ── Top-hit expansion ─────────────────────────────────────────────────────────

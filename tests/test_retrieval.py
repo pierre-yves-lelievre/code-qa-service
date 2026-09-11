@@ -3,9 +3,6 @@
 import pytest
 
 from app.retrieval import (
-    ENUMERATE_INDEX_HITS,
-    FULL_HITS,
-    INDEX_HITS,
     MAX_CANDIDATES,
     Hit,
     apply_floor,
@@ -115,17 +112,17 @@ def test_getter_and_setter_collapse_but_unnamed_windows_stay_apart():
 
 
 @pytest.mark.parametrize(
-    ("count", "intent", "sizes"),
+    ("count", "index_lines", "sizes"),
     [
-        (100, "explain", (FULL_HITS, INDEX_HITS)),
-        (100, "enumerate", (FULL_HITS, ENUMERATE_INDEX_HITS)),
-        (50, "enumerate", (FULL_HITS, 50 - FULL_HITS)),
-        (5, "lookup", (5, 0)),
+        (100, 30, (12, 30)),
+        (100, 60, (12, 60)),
+        (50, 60, (12, 38)),
+        (5, 30, (5, 0)),
     ],
 )
-def test_full_hits_then_a_compact_index_widened_for_enumerate(count, intent, sizes):
+def test_full_hits_then_a_compact_index_of_the_given_size(count, index_lines, sizes):
     fused = [_hit(i) for i in range(count)]
-    full, index = split_hits(fused, intent)
+    full, index = split_hits(fused, 12, index_lines)
     assert (len(full), len(index)) == sizes
     assert full + index == fused[: sum(sizes)]
 

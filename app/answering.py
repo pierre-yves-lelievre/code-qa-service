@@ -20,7 +20,7 @@ from app.errors import ProviderError, RepoNotFoundError, RepoNotIndexedError
 from app.llm import Citation, ClaudeLLM, Completion, FakeLLM, Usage
 from app.logging_setup import get_logger
 from app.planning import HISTORY_TURNS, Turn, plan
-from app.retrieval import Hit, retrieve
+from app.retrieval import Hit, retrieve, split_hits
 from app.store import ChunkStore, StoredTurn
 
 log = get_logger(__name__)
@@ -377,11 +377,17 @@ def ask(
             not_found=not_found,
         )
 
-    if found.full:
+    index_lines = (
+        settings.answer_index_lines_enumerate
+        if planned.intent == "enumerate"
+        else settings.answer_index_lines
+    )
+    full_hits, index_hits = split_hits(found.hits, settings.answer_full_hits, index_lines)
+    if full_hits:
         context = repo_context(repo.owner, repo.name, snapshot.commit_sha, repo.summary)
-        full = _full_sources(found.full, snapshot.id, snapshot.commit_sha, store)
+        full = _full_sources(full_hits, snapshot.id, snapshot.commit_sha, store)
         floor = found.no_relevant_sources
-        briefing = brief(question, context, history, full, found.index, floor)
+        briefing = brief(question, context, history, full, index_hits, floor)
         clock = time.monotonic()
         try:
             completion = llm.complete(

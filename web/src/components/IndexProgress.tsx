@@ -308,8 +308,9 @@ function Summary({
             <tbody className="tabular-nums">
               {languages.map(([language, row]) => (
                 <tr key={language} className="border-t border-slate-100">
-                  <td className="truncate py-1.5 text-slate-700" title={language}>
-                    {language}
+                  {/* "text" is indexing.py's key for files windowed without a parser. */}
+                  <td className="truncate py-1.5 text-slate-700">
+                    {language === "text" ? "other" : language}
                   </td>
                   <td className="py-1.5 text-right">{fmt(row.files)}</td>
                   <td className="py-1.5 text-right">{fmt(row.symbols)}</td>

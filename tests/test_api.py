@@ -1,6 +1,8 @@
 """API tests through TestClient."""
 
 import json
+import threading
+import time
 import uuid
 from collections.abc import Callable
 from hashlib import sha256
@@ -349,6 +351,39 @@ def test_forced_index_at_the_same_commit_builds_and_activates_a_new_snapshot(
     assert shas == [(repo.head(),)]
 
 
+class _SlowFakeEmbeddings(FakeEmbeddings):
+    """Pauses before each batch, so an index job sits mid-run long enough to be watched."""
+
+    def embed_documents(self, texts: list[str]) -> Embedded:
+        """Wait, then embed like the fake."""
+        time.sleep(0.5)
+        return super().embed_documents(texts)
+
+
+def test_index_progress_is_visible_to_another_connection_while_the_job_runs(
+    client, committed, fixture_repo
+):
+    repo = fixture_repo("py_app")
+    repo_id = ChunkStore().upsert_repo("octo", "py_app", REPO_URL)
+    jobs = JobStore()
+    job = jobs.create(repo_id)
+    github = GitHubClient(transport=httpx.MockTransport(_repo_api()), clone_base=repo.clone_base)
+    embeddings = _SlowFakeEmbeddings(settings.embedding_dims)
+    ref = RepoRef("octo", "py_app", "main")
+    args = (job.id, repo_id, ref, jobs, ChunkStore(), github, embeddings, FakeLLM())
+    worker = threading.Thread(target=_run_index, args=args)
+    stages: list[str | None] = []
+    with psycopg.connect(settings.database_url, autocommit=True) as watcher:
+        worker.start()
+        while worker.is_alive():
+            row = watcher.execute("SELECT progress FROM index_jobs WHERE id = %s", (job.id,))
+            stages.append(row.fetchone()[0].get("stage"))
+            time.sleep(0.02)
+        worker.join()
+    assert jobs.get(job.id).status == "succeeded"
+    assert {"parsing", "embedding"} & set(stages)  # committed per batch, not at the end
+
+
 def test_job_past_its_timeout_is_failed(
     client, committed, mock_github, fixture_repo, monkeypatch: pytest.MonkeyPatch
 ):
@@ -675,7 +710,7 @@ def test_with_nothing_retrieved_no_answer_call_is_made(
 ):
     repo_id, _ = _indexed_py_app(client, mock_github, fixture_repo)
     empty = {"status": "empty", "hits": 0, "ms": 0}
-    nothing = Retrieval([], [], True, {"symbol": empty, "fts": empty, "vector": empty}, (), 0)
+    nothing = Retrieval([], True, {"symbol": empty, "fts": empty, "vector": empty}, (), 0)
     monkeypatch.setattr("app.answering.retrieve", lambda *args: nothing)
     llm = mock_llm(FakeLLM())
     body = _ask(client, repo_id, TAX_QUESTION).json()

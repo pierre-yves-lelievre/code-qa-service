@@ -274,7 +274,7 @@ def test_a_failing_vector_leg_leaves_the_other_two(store):
     result = retrieve(_plan("slugify"), snapshot_id, store, embeddings)
     statuses = {leg: trace["status"] for leg, trace in result.legs.items()}
     assert statuses == {"symbol": "ok", "fts": "ok", "vector": "unavailable"}
-    assert result.full[0].qualname == "shop.util.slugify"
+    assert result.hits[0].qualname == "shop.util.slugify"
     assert result.embed_tokens == 0
 
 
@@ -290,7 +290,7 @@ def test_a_failing_store_leg_leaves_the_other_two(store, monkeypatch):
     statuses = {leg: trace["status"] for leg, trace in result.legs.items()}
     assert statuses == {"symbol": "ok", "fts": "unavailable", "vector": "ok"}
     assert result.legs["fts"]["hits"] == 0
-    assert result.full[0].qualname == "shop.util.slugify"
+    assert result.hits[0].qualname == "shop.util.slugify"
 
 
 def test_floor_fires_on_an_unrelated_question(store):
@@ -308,7 +308,7 @@ def test_or_fallback_hits_alone_do_not_hold_off_the_floor(store):
         "skipped",
         "or_fallback",
     )
-    assert "shop.util.tax_rate" in [h.qualname for h in result.full]
+    assert "shop.util.tax_rate" in [h.qualname for h in result.hits]
     assert result.no_relevant_sources
 
 
@@ -319,7 +319,7 @@ def test_a_symbol_hit_holds_off_the_floor_when_full_text_only_falls_back(store):
         "ok",
         "or_fallback",
     )
-    assert result.full[0].qualname == "shop.util.tax_rate"
+    assert result.hits[0].qualname == "shop.util.tax_rate"
     assert not result.no_relevant_sources
 
 
@@ -327,7 +327,7 @@ def test_a_chunks_exact_text_as_the_query_ranks_it_first_and_clears_the_floor(st
     snapshot_id = _py_snapshot(store)
     chunk_id, text = _chunk(db, snapshot_id, "shop.models.Product.reserve")
     result = _retrieve(store, snapshot_id, _plan(text))
-    assert result.full[0].id == chunk_id
+    assert result.hits[0].id == chunk_id
     assert not result.no_relevant_sources
 
 
@@ -344,13 +344,13 @@ def test_a_planned_follow_up_retrieves_the_symbol_it_names(store):
     planned = plan("and the tax one?", [first], FakeLLM([reply]))
     result = _retrieve(store, snapshot_id, planned)
     assert result.identifiers == ("tax_rate",)
-    assert (result.full[0].qualname, result.full[0].tier) == ("shop.util.tax_rate", "symbol")
+    assert (result.hits[0].qualname, result.hits[0].tier) == ("shop.util.tax_rate", "symbol")
 
 
 def test_retrieval_never_leaves_the_snapshot(store, db):
     _py_snapshot(store, "a" * 40)
     newer = _py_snapshot(store, "b" * 40)  # same content: every vector is shared
     result = _retrieve(store, newer, _plan("slugify tax rate"))
-    found = {h.id for h in result.full + result.index}
+    found = {h.id for h in result.hits}
     rows = db.execute("SELECT id FROM chunks WHERE snapshot_id = %s", (newer,)).fetchall()
     assert found and found <= {chunk_id for (chunk_id,) in rows}
