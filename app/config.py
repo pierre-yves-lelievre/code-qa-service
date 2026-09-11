@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     answer_timeout_s: float = 60.0
 
     # ── Retrieval ─────────────────────────────────────────────────────────────
-    relevance_floor: float = 0.35
+    relevance_floor: float = 0.25
 
     # ── Answering ─────────────────────────────────────────────────────────────
     answer_full_hits: int = 12  # sources briefed in full

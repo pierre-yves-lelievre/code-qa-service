@@ -697,15 +697,22 @@ def test_a_citation_to_a_source_that_was_not_briefed_is_dropped_and_noted(
     ]
 
 
-def test_a_question_the_floor_rejects_is_not_found_and_the_request_says_so(
+def test_the_floor_only_adds_its_sentence_and_the_sentinel_decides_not_found(
     client, committed, mock_github, mock_llm, fixture_repo
 ):
     repo_id, _ = _indexed_py_app(client, mock_github, fixture_repo)
-    llm = mock_llm(FakeLLM())
+    said = Completion("Not found in the indexed code. Try a billing module.", (), Usage(10, 5))
+    llm = mock_llm(FakeLLM(completions=[said]))
     body = _ask(client, repo_id, "Where is the Stripe integration?").json()
-    assert body["not_found"] is True
+    assert body["not_found"] is True  # from the sentinel the model was asked to open with
     answer = llm.requests[-1]
     assert {"type": "text", "text": FLOOR_NOTE} in answer["messages"][-1]["content"]
+
+    cited = _ask(client, repo_id, "Where is the Stripe integration?").json()
+    assert (
+        llm.requests[-1]["messages"][-1]["content"].count({"type": "text", "text": FLOOR_NOTE}) == 1
+    )  # the floor fired again
+    assert cited["not_found"] is False and cited["sources"]  # yet a cited answer stands
 
 
 def test_the_briefing_honours_the_full_hits_and_index_lines_settings(

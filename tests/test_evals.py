@@ -118,7 +118,7 @@ def test_the_report_has_a_row_per_case_then_hit_at_5_not_found_and_cost_lines():
     )
     null = Case(3, ("Stripe?",), None, "")
     results = [
-        Result(target, "hit", 1, "symbol", False, "ok", 10, 0.001),
+        Result(target, "hit", 1, "symbol", False, "ok", 10, 0.001, 0.612),
         Result(absent, "absent", floor=False, planner="ok", ms=30, usd=0.003),
         Result(null, "not_found", planner="ok", ms=900, usd=0.03),
     ]
@@ -126,7 +126,8 @@ def test_the_report_has_a_row_per_case_then_hit_at_5_not_found_and_cost_lines():
     text = report(results, run, run)
     rows = [line for line in text.splitlines() if line.startswith("| ") and "---" not in line]
     assert len(rows) == 1 + len(results)  # the header, then one row per case
-    assert "| 1 | Q one? | a.py :: f | hit | 1 | symbol | no | ok | 10 | 0.0010 |" in rows
+    assert "| 1 | Q one? | a.py :: f | hit | 1 | symbol | no | 0.612 | ok | 10 | 0.0010 |" in rows
+    assert "best cosine: lowest among hits 0.612 (#1)" in text
     assert "hit@5: 1/2; absent from the index (fix golden.json, not the code): #2" in text
     assert "not-found: 1/1" in text
     assert "retrieval (plan + retrieve) per question: n=2, median 20 ms" in text
@@ -250,6 +251,33 @@ def test_evaluate_answers_only_the_null_case_and_earlier_turns_and_replays_histo
     ]
     assert len(run_rows("run1")) == 2
     assert run_rows("run2") == []
+
+
+def test_retrieval_only_makes_no_answer_call_and_reports_each_best_cosine(env, fixture_repo):
+    repo = fixture_repo("py_app")
+    cases = (
+        Case(1, ("What does tax_rate do?",), Expect("shop/util.py", "tax_rate"), "symbol"),
+        Case(2, ("Where is the Stripe integration?",), None, "not found"),
+        Case(
+            3,
+            ("What does slugify do?", "Where is Product defined?"),
+            Expect("shop/models.py", "Product"),
+            "rewrite",
+        ),
+    )
+    golden = _golden(repo, cases)
+    store, embeddings, llm = ChunkStore(), FakeEmbeddings(settings.embedding_dims), FakeLLM()
+    repo_id, snapshot = ensure_indexed(
+        golden, False, store, JobStore(), _github(repo), embeddings, llm
+    )
+    llm.requests.clear()  # drop the index run's summary call
+
+    results = evaluate(golden, repo_id, snapshot.id, "run1", store, embeddings, llm, True)
+
+    assert [r.outcome for r in results] == ["hit", "skipped", "skipped"]
+    assert all(r.cosine is not None for r in results)
+    assert {r["kind"] for r in llm.requests} == {"structured"}  # planner calls only
+    assert _rows("SELECT count(*) FROM queries") == [(0,)]
 
 
 # ── Smoke ─────────────────────────────────────────────────────────────────────

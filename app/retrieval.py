@@ -70,6 +70,7 @@ class Retrieval:
     identifiers: tuple[str, ...]
     embed_tokens: int
     embed_ms: int = 0
+    best_cosine: float | None = None  # the vector leg's top score, which the floor compares
 
 
 # ── Tokens ────────────────────────────────────────────────────────────────────
@@ -241,11 +242,9 @@ def retrieve(
     hits = collapse_parts(rrf(legs.hits))
     and_hits = legs.hits["fts"] if legs.trace["fts"]["status"] == "ok" else []
     vector = legs.hits["vector"]
+    best_cosine = vector[0].score if vector else None
     no_relevant = apply_floor(
-        len(legs.hits["symbol"]),
-        len(and_hits),
-        vector[0].score if vector else None,
-        settings.relevance_floor,
+        len(legs.hits["symbol"]), len(and_hits), best_cosine, settings.relevance_floor
     )
     log.info(
         "retrieval_done",
@@ -254,7 +253,13 @@ def retrieve(
         **{leg: trace["status"] for leg, trace in legs.trace.items()},
     )
     return Retrieval(
-        hits, no_relevant, legs.trace, legs.identifiers, legs.embed_tokens, legs.embed_ms
+        hits,
+        no_relevant,
+        legs.trace,
+        legs.identifiers,
+        legs.embed_tokens,
+        legs.embed_ms,
+        best_cosine,
     )
 
 

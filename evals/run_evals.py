@@ -28,8 +28,8 @@ from app.jobs import JobStore
 from app.llm import ClaudeLLM, FakeLLM
 from app.logging_setup import configure_logging
 from app.main import DATABASE_UNREACHABLE, build_clients
-from app.planning import HISTORY_TURNS, Turn, plan
-from app.retrieval import Hit, retrieve
+from app.planning import HISTORY_TURNS, Plan, Turn, plan
+from app.retrieval import Hit, Retrieval, retrieve
 from app.store import ChunkStore, Snapshot
 from app.summary import README_BYTES, SUMMARY_MAX_TOKENS
 
@@ -39,7 +39,7 @@ BYTES_PER_TOKEN = 3  # chunking.estimate_tokens' rule
 HEX = frozenset("0123456789abcdef")
 FAKE_BANNER = "PROVIDERS=fake: fake vectors and canned answers; the numbers below mean nothing."
 
-Outcome = Literal["hit", "miss", "absent", "not_found", "answered", "error"]
+Outcome = Literal["hit", "miss", "absent", "not_found", "answered", "error", "skipped"]
 LABELS: dict[Outcome, str] = {
     "hit": "hit",
     "miss": "miss",
@@ -47,6 +47,7 @@ LABELS: dict[Outcome, str] = {
     "not_found": "not found ✓",
     "answered": "answered ✗",
     "error": "error",
+    "skipped": "retrieval only",
 }
 Row = tuple[dict[str, Any], dict[str, Any]]  # (timings, tokens) of one answered `queries` row
 
@@ -107,6 +108,7 @@ class Result:
     planner: str | None = None
     ms: int = 0
     usd: float = 0.0
+    cosine: float | None = None  # the vector leg's best score, for calibrating the floor
 
 
 class EvalSetupError(Exception):
@@ -270,13 +272,29 @@ def evaluate(
     store: ChunkStore,
     embeddings: VoyageEmbeddings | FakeEmbeddings,
     llm: ClaudeLLM | FakeLLM,
+    retrieval_only: bool = False,
 ) -> list[Result]:
-    """Score every case, in file order."""
+    """Score every case, in file order; `retrieval_only` makes no answer call."""
     absent = absent_targets(snapshot_id, golden.cases)
     return [
-        score(case, repo_id, snapshot_id, absent, run_id, store, embeddings, llm)
+        score(case, repo_id, snapshot_id, absent, run_id, store, embeddings, llm, retrieval_only)
         for case in golden.cases
     ]
+
+
+def plan_and_retrieve(
+    question: str,
+    history: list[Turn],
+    snapshot_id: int,
+    store: ChunkStore,
+    embeddings: VoyageEmbeddings | FakeEmbeddings,
+    llm: ClaudeLLM | FakeLLM,
+) -> tuple[Plan, Retrieval, int]:
+    """Plan and retrieve one question, as `ask()` does before its answer call; and the ms."""
+    started = time.monotonic()
+    planned = plan(question, history, llm)
+    found = retrieve(planned, snapshot_id, store, embeddings)
+    return planned, found, round((time.monotonic() - started) * 1000)
 
 
 def score(
@@ -288,9 +306,27 @@ def score(
     store: ChunkStore,
     embeddings: VoyageEmbeddings | FakeEmbeddings,
     llm: ClaudeLLM | FakeLLM,
+    retrieval_only: bool = False,
 ) -> Result:
-    """Ask the turns before the last, then score the last by retrieval or through `ask()`."""
+    """Ask the turns before the last, then score the last by retrieval or through `ask()`.
+
+    With `retrieval_only` nothing is answered: a case that needs an answer (the null case, a
+    conversation) is planned and retrieved alone, for its floor and best cosine, and skipped.
+    """
     try:
+        if retrieval_only and (case.expect is None or len(case.turns) > 1):
+            planned, found, ms = plan_and_retrieve(
+                case.turns[-1], [], snapshot_id, store, embeddings, llm
+            )
+            return Result(
+                case,
+                "skipped",
+                floor=found.no_relevant_sources,
+                planner=planned.planner,
+                ms=ms,
+                usd=usd({**asdict(planned.usage), "embed": found.embed_tokens}),
+                cosine=found.best_cosine,
+            )
         conversation: str | None = None
         for turn, question in enumerate(case.turns[:-1], start=1):
             rid = request_id(run_id, case.id, turn)
@@ -310,10 +346,8 @@ def score(
                 usd=usd(tokens),
             )
         turns = store.recent_turns(repo_id, conversation, HISTORY_TURNS) if conversation else []
-        started = time.monotonic()
-        planned = plan(last, [Turn(t.question, t.answer) for t in turns], llm)
-        found = retrieve(planned, snapshot_id, store, embeddings)
-        ms = round((time.monotonic() - started) * 1000)
+        history = [Turn(t.question, t.answer) for t in turns]
+        planned, found, ms = plan_and_retrieve(last, history, snapshot_id, store, embeddings, llm)
     except ServiceError as exc:
         print(f"case {case.id}: {exc.code}: {exc}", file=sys.stderr)
         return Result(case, "error")
@@ -328,6 +362,7 @@ def score(
         planner=planned.planner,
         ms=ms,
         usd=usd({**asdict(planned.usage), "embed": found.embed_tokens}),
+        cosine=found.best_cosine,
     )
 
 
@@ -358,8 +393,8 @@ def repo_rows(repo_id: int) -> list[Row]:
 def report(results: Sequence[Result], run: Sequence[Row], repo: Sequence[Row]) -> str:
     """The markdown table, then hit@5, not-found, latency and cost lines."""
     lines = [
-        "| # | Question | Expect | Result | Rank | Tier | Floor | Planner | ms | USD |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| # | Question | Expect | Result | Rank | Tier | Floor | Cosine | Planner | ms | USD |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in results:
         cells = [
@@ -370,19 +405,28 @@ def report(results: Sequence[Result], run: Sequence[Row], repo: Sequence[Row]) -
             str(r.rank or "—"),
             r.tier or "—",
             "—" if r.floor is None else "yes" if r.floor else "no",
+            "—" if r.cosine is None else f"{r.cosine:.3f}",
             r.planner or "—",
             f"{r.ms:,}",
             f"{r.usd:.4f}",
         ]
         lines.append("| " + " | ".join(cells) + " |")
-    scored = [r for r in results if r.case.expect is not None]
+    scored = [r for r in results if r.case.expect is not None and r.outcome != "skipped"]
     hits = sum(r.outcome == "hit" for r in scored)
     absent = [f"#{r.case.id}" for r in scored if r.outcome == "absent"]
     hit_line = f"hit@5: {hits}/{len(scored)}"
     if absent:
         hit_line += f"; absent from the index (fix golden.json, not the code): {', '.join(absent)}"
-    null = [r for r in results if r.case.expect is None]
-    lines += ["", hit_line, f"not-found: {sum(r.outcome == 'not_found' for r in null)}/{len(null)}"]
+    null = [r for r in results if r.case.expect is None and r.outcome != "skipped"]
+    found = sum(r.outcome == "not_found" for r in null)
+    lines += ["", hit_line, f"not-found: {found}/{len(null)}" if null else "not-found: skipped"]
+    hit_cosines = [(r.cosine, r.case.id) for r in scored if r.outcome == "hit" and r.cosine]
+    if hit_cosines:
+        low, case_id = min(hit_cosines)
+        lines.append(
+            f"best cosine: lowest among hits {low:.3f} (#{case_id});"
+            f" relevance_floor {settings.relevance_floor:.2f}"
+        )
     timed = [r for r in scored if r.outcome != "error"]
     if timed:
         lines.append(
@@ -392,7 +436,8 @@ def report(results: Sequence[Result], run: Sequence[Row], repo: Sequence[Row]) -
         )
     lines.append(_rows_line("answers this run (queries)", run))
     lines.append(_rows_line("answers for this repo, all runs (queries)", repo))
-    total = sum(r.usd for r in scored) + sum(usd(tokens) for _, tokens in run)
+    skipped = [r for r in results if r.outcome == "skipped"]
+    total = sum(r.usd for r in [*scored, *skipped]) + sum(usd(tokens) for _, tokens in run)
     lines.append(f"run total: ${total:.4f}")
     return "\n".join(lines)
 
@@ -433,6 +478,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="index the pinned repo even when it is current (prints the estimate first)",
     )
+    parser.add_argument(
+        "--retrieval-only",
+        action="store_true",
+        help="plan and retrieve only, no answer call: the null case and conversations are skipped",
+    )
     parser.add_argument("--golden", type=Path, default=GOLDEN, help="the golden file")
     parser.add_argument("--verbose", action="store_true", help="service logs at INFO on stderr")
     args = parser.parse_args(argv)
@@ -454,7 +504,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         print(f"Run {run_id}: {len(golden.cases)} cases at {golden.commit[:12]}.\n")
-        results = evaluate(golden, repo_id, snapshot.id, run_id, store, embeddings, llm)
+        results = evaluate(
+            golden, repo_id, snapshot.id, run_id, store, embeddings, llm, args.retrieval_only
+        )
         print(report(results, run_rows(run_id), repo_rows(repo_id)))
         return 0
     except (EvalSetupError, ServiceError) as exc:

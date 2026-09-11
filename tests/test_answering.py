@@ -23,6 +23,7 @@ from app.answering import (
     excerpt,
     expand_top,
     from_stored,
+    github_url,
     is_not_found,
     repo_context,
     resolve,
@@ -275,10 +276,10 @@ def _completion(*citations: Citation, text: str = "It is computed.", truncated=F
 
 def test_citations_outside_the_briefing_or_with_another_source_are_dropped():
     citations = [_cite(7, PARTS.source), _cite(0, PARTS.source), _cite(1, PARTS.source)]
-    checked = check(_completion(*citations), BRIEFED, REPO_URL, floor=False, retrieved=True)
+    checked = check(_completion(*citations), BRIEFED, REPO_URL, retrieved=True)
     assert [s.source for s in checked.sources] == [PARTS.source]
     assert checked.notes == ["2 citations were dropped: not a source that was provided."]
-    one = check(_completion(_cite(5, "x")), BRIEFED, REPO_URL, floor=False, retrieved=True)
+    one = check(_completion(_cite(5, "x")), BRIEFED, REPO_URL, retrieved=True)
     assert one.notes[0] == "1 citation was dropped: not a source that was provided."
 
 
@@ -311,16 +312,15 @@ def test_the_excerpt_is_capped_in_lines_and_characters():
 
 
 @pytest.mark.parametrize(
-    ("text", "floor", "retrieved", "expected"),
+    ("text", "retrieved", "expected"),
     [
-        ("It is in cart.py.", False, True, False),
-        ("It is in cart.py.", True, True, True),  # the floor fired
-        ("It is in cart.py.", False, False, True),  # nothing was retrieved
-        ("not found in the indexed code. Try billing/.", False, True, True),  # the model said so
+        ("It is in cart.py.", True, False),
+        ("It is in cart.py.", False, True),  # nothing was retrieved
+        ("not found in the indexed code. Try billing/.", True, True),  # the model said so
     ],
 )
-def test_not_found_comes_from_the_floor_no_sources_or_the_model(text, floor, retrieved, expected):
-    assert is_not_found(text, floor, retrieved) is expected
+def test_not_found_comes_from_no_sources_or_the_model(text, retrieved, expected):
+    assert is_not_found(text, retrieved) is expected
 
 
 def test_only_an_answer_that_opens_with_the_sentinel_is_not_found():
@@ -328,20 +328,25 @@ def test_only_an_answer_that_opens_with_the_sentinel_is_not_found():
         "The client is generated from `/api/v1/openapi.json`.\n\n"
         "## What's not found in the indexed code\n\nThe generator's config file."
     )
-    assert not is_not_found(partial, False, True)
-    assert is_not_found("**Not found in the indexed code.** Try `billing/`.", False, True)
+    assert not is_not_found(partial, True)
+    assert is_not_found("**Not found in the indexed code.** Try `billing/`.", True)
+
+
+def test_a_module_source_links_to_the_whole_file_and_any_other_to_its_lines():
+    sha = "a" * 40
+    blob = f"{REPO_URL}/blob/{sha}/shop/cart.py"
+    assert github_url(REPO_URL, sha, "shop/cart.py", 3, 9) == f"{blob}#L3-L9"
+    assert github_url(REPO_URL, sha, "shop/cart.py", 1, 40, whole_file=True) == blob
 
 
 def test_an_uncited_answer_is_noted_unless_it_is_not_found():
-    assert check(_completion(), BRIEFED, REPO_URL, False, True).notes == [NO_CITATIONS_NOTE]
-    not_found = check(_completion(text=f"{NOT_FOUND}."), BRIEFED, REPO_URL, False, True)
+    assert check(_completion(), BRIEFED, REPO_URL, True).notes == [NO_CITATIONS_NOTE]
+    not_found = check(_completion(text=f"{NOT_FOUND}."), BRIEFED, REPO_URL, True)
     assert (not_found.not_found, not_found.notes) == (True, [])
 
 
 def test_a_truncated_answer_is_noted():
-    checked = check(
-        _completion(_cite(0, OLD.source), truncated=True), BRIEFED, REPO_URL, False, True
-    )
+    checked = check(_completion(_cite(0, OLD.source), truncated=True), BRIEFED, REPO_URL, True)
     assert checked.notes == [TRUNCATED_NOTE]
 
 

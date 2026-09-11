@@ -85,12 +85,16 @@ export default function Sources({
       <h3 className="caption">Sources ({sources.length})</h3>
       <ol className="mt-2 space-y-3">
         {sources.map((source, index) => {
-          const lines = `${source.path}:${source.start_line}–${source.end_line}`;
+          // A module chunk's lines are scattered through the file: it names and links the file.
+          const lines =
+            source.kind === "module"
+              ? `${source.path} · module`
+              : `${source.path}:${source.start_line}–${source.end_line}`;
           // The link is built by the server; anything else is shown as text, never as a link.
           const linkable = source.github_url.startsWith("https://github.com/");
           return (
             <li
-              key={lines}
+              key={`${source.path}:${source.start_line}:${source.end_line}`}
               id={`${anchor}-${index + 1}`}
               className="scroll-mt-24 overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-slate-200"
             >

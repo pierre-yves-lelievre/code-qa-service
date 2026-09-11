@@ -30,7 +30,7 @@ since 1.x it fetches grammar binaries at runtime, outside the lock and pip-audit
 **Settings**: `database_url`, `voyage_api_key`, `anthropic_api_key`, `github_token: str | None`,
 `embedding_model="voyage-code-4"`, `embedding_dims=1024`, `llm_model` (exact console string),
 `data_dir=./data`, `max_repo_mb=200`, `max_file_kb=512`, `max_files=20000`,
-`max_running_jobs=2`, `relevance_floor=0.35`, `providers="fake" | "real"` (default `fake`;
+`max_running_jobs=2`, `relevance_floor=0.25` (calibrated on the golden set in Phase 10), `providers="fake" | "real"` (default `fake`;
 `real` requires both keys), `max_embed_tokens_per_job=5_000_000`, `log_level`.
 
 **`.env.example`** ships with `PROVIDERS=fake` so a fresh clone runs the full stack without keys;
@@ -435,7 +435,7 @@ expected to answer "Not found".
 
 **Post-processing**: map citations to sources; **validity check** — every citation must point at
 a chunk that was in the context, else it is dropped and a note is added; `not_found` when the answer
-opens with the sentinel, no sources were retrieved, or the floor fired. GitHub links are built server-side from
+opens with the sentinel or no sources were retrieved (the floor only adds a sentence). GitHub links are built server-side from
 path, lines, and commit sha; nothing the model emits is used as a URL.
 
 Response JSON:
@@ -479,8 +479,8 @@ suggested questions, stored on `repos`. Best-effort; failure leaves it null.
   - A citation must land, by its global `search_result_index`, on a briefed source with the
     same `source` string. Otherwise it is dropped and noted.
   - The cited blocks narrow the lines.
-  - `not_found` is set by the floor, by no sources, or by the model's sentinel at the start of
-    the answer (a partial answer may name what is missing further down).
+  - `not_found` is set by no sources or by the model's sentinel at the start of the answer (a
+    partial answer may name what is missing further down); the floor only adds its sentence.
 - *Summary*:
   - It is a structured call over the top-level README (capped at 24 KB) and the top-level tree.
   - It runs after embedding and before activation. A failure writes nothing and shows in the
@@ -490,7 +490,7 @@ suggested questions, stored on `repos`. Best-effort; failure leaves it null.
   `repo_not_indexed`.
 
 **Tests**: happy path with `FakeLLM`; citation to an unknown source is dropped and noted;
-floor-fired question returns `not_found=true`; enumerate intent widens the compact index; second
+floor-fired question gets the floor sentence, and `not_found` only from the sentinel; enumerate intent widens the compact index; second
 turn includes the first turn's sources in the request; unknown repo → 404 `repo_not_found`.
 
 **Commits**
