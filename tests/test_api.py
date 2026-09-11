@@ -653,7 +653,10 @@ def test_ask_answers_with_cited_sources_server_links_tokens_and_a_logged_query(
 
     planner, answer = llm.requests
     assert _kinds(llm) == ["structured", "complete"]
-    assert (answer["max_tokens"], answer["timeout"]) == (1500, settings.answer_timeout_s)
+    assert (answer["max_tokens"], answer["timeout"]) == (
+        settings.answer_max_tokens,
+        settings.answer_timeout_s,
+    )
     assert answer["system"][1]["text"].startswith(f"Repository octo/py_app at commit {sha}.")
     assert "A fake summary of the repository." in answer["system"][1]["text"]
     plan_reply = {"query": TAX_QUESTION, "identifiers": [], "intent": "explain"}

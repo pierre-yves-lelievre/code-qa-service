@@ -323,6 +323,15 @@ def test_not_found_comes_from_the_floor_no_sources_or_the_model(text, floor, ret
     assert is_not_found(text, floor, retrieved) is expected
 
 
+def test_only_an_answer_that_opens_with_the_sentinel_is_not_found():
+    partial = (
+        "The client is generated from `/api/v1/openapi.json`.\n\n"
+        "## What's not found in the indexed code\n\nThe generator's config file."
+    )
+    assert not is_not_found(partial, False, True)
+    assert is_not_found("**Not found in the indexed code.** Try `billing/`.", False, True)
+
+
 def test_an_uncited_answer_is_noted_unless_it_is_not_found():
     assert check(_completion(), BRIEFED, REPO_URL, False, True).notes == [NO_CITATIONS_NOTE]
     not_found = check(_completion(text=f"{NOT_FOUND}."), BRIEFED, REPO_URL, False, True)

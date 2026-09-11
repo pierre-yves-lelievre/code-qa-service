@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     answer_full_hits: int = 12  # sources briefed in full
     answer_index_lines: int = 30  # one-line index entries after them
     answer_index_lines_enumerate: int = 60  # for an enumerate question
+    answer_max_tokens: int = 3_000  # the answer call's output cap
 
     @field_validator("voyage_api_key", "anthropic_api_key", "github_token", mode="before")
     @classmethod

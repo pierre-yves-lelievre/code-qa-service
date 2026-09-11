@@ -434,8 +434,8 @@ expected to answer "Not found".
 `async def` with the async clients. Never a sync client inside `async def`.
 
 **Post-processing**: map citations to sources; **validity check** — every citation must point at
-a chunk that was in the context, else it is dropped and a note is added; `not_found` when the model
-says so, no sources were retrieved, or the floor fired. GitHub links are built server-side from
+a chunk that was in the context, else it is dropped and a note is added; `not_found` when the answer
+opens with the sentinel, no sources were retrieved, or the floor fired. GitHub links are built server-side from
 path, lines, and commit sha; nothing the model emits is used as a URL.
 
 Response JSON:
@@ -479,7 +479,8 @@ suggested questions, stored on `repos`. Best-effort; failure leaves it null.
   - A citation must land, by its global `search_result_index`, on a briefed source with the
     same `source` string. Otherwise it is dropped and noted.
   - The cited blocks narrow the lines.
-  - `not_found` is set by the floor, by no sources, or by the model's sentinel.
+  - `not_found` is set by the floor, by no sources, or by the model's sentinel at the start of
+    the answer (a partial answer may name what is missing further down).
 - *Summary*:
   - It is a structured call over the top-level README (capped at 24 KB) and the top-level tree.
   - It runs after embedding and before activation. A failure writes nothing and shows in the
