@@ -1,4 +1,4 @@
-.PHONY: install db run test lint format audit check eval web
+.PHONY: install db run test lint format audit check eval smoke web
 
 install:
 	uv sync --all-groups
@@ -33,6 +33,10 @@ check: lint
 # Spends money with PROVIDERS=real; `make eval ARGS=--reindex` forces a re-index.
 eval:
 	uv run python -m evals.run_evals $(ARGS)
+
+# Spends money with PROVIDERS=real (about $0.07 on pallets/markupsafe); `ARGS=--repo URL` for another.
+smoke:
+	uv run python -m evals.smoke $(ARGS)
 
 # Type-checks and builds the page into app/static, which the app serves at /.
 web:

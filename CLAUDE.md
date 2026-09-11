@@ -18,7 +18,7 @@ When they disagree, ask; do not guess.
 | `make audit` | `pip-audit` over the locked dependencies |
 | `make check` | lint + format `--check` + test — **run before every commit** |
 | `make eval` | golden set against the demo repo (needs real keys); `ARGS=--reindex` to force |
-| `make smoke` | end-to-end on a tiny fixture repo with real keys |
+| `make smoke` | index `pallets/markupsafe` and ask one question (real keys: about $0.07) |
 | `make web` | build the SPA into `app/static/` |
 | `docker compose up --build` | full stack |
 
@@ -52,7 +52,7 @@ app/
 web/                  # Vite + React + Tailwind + TypeScript, built into app/static (never committed)
 ├── src/api.ts        #   fetch wrapper ({detail, code} -> ApiError) and types mirroring schemas.py
 └── src/components/   #   RepoSearch, IndexProgress, Chat, Sources, Trace; one file each
-evals/                # golden.json, run_evals.py
+evals/                # golden.json, run_evals.py, smoke.py
 tests/                # conftest.py, test_parsing.py, test_chunking.py, test_retrieval.py,
                       # test_store.py, test_jobs.py, test_db.py, test_github.py,
                       # test_embeddings.py, test_llm.py, test_planning.py,
@@ -119,7 +119,7 @@ per call** and are used only at the very end. Rules:
   API spend. `PROVIDERS=real` requires both keys and fails at startup without them. There is no
   automatic fallback between the two.
 - Tests never call an API. Phases 0–9 are built and verified entirely with fakes.
-- The first real call is `make smoke` on `tests/fixtures/py_app` (a few dozen files) in Phase 10,
+- The first real call is `make smoke` on `pallets/markupsafe` (a small public repo) in Phase 10,
   after every phase is green. Only then is the golden repo indexed with real keys, once.
 - Never run `make eval`, `make smoke`, or index a real repo with `PROVIDERS=real` unless the author
   asks in that session. Say what it will cost before doing it.

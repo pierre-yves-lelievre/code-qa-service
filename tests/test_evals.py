@@ -16,6 +16,7 @@ from app.jobs import JobStore
 from app.llm import FakeLLM
 from app.retrieval import Hit
 from app.store import ChunkStore
+from evals import smoke
 from evals.run_evals import (
     GOLDEN,
     Case,
@@ -249,3 +250,26 @@ def test_evaluate_answers_only_the_null_case_and_earlier_turns_and_replays_histo
     ]
     assert len(run_rows("run1")) == 2
     assert run_rows("run2") == []
+
+
+# ── Smoke ─────────────────────────────────────────────────────────────────────
+
+
+def test_the_smoke_prints_the_estimate_indexes_answers_and_skips_the_index_on_a_rerun(
+    env, fixture_repo, capsys
+):
+    repo = fixture_repo("py_app")
+    store, jobs = ChunkStore(), JobStore()
+    embeddings, llm = FakeEmbeddings(settings.embedding_dims), FakeLLM()
+    url = f"https://github.com/octo/{repo.name}"
+
+    repo_id = smoke.index(url, store, jobs, _github(repo), embeddings, llm)
+    out = capsys.readouterr().out
+    assert out.index("Index estimate") < out.index("Question estimate") < out.index("Indexed octo/")
+
+    result = smoke.answer(repo_id, "What does slugify do?", store, embeddings, llm)
+    assert result.sources and not result.not_found
+
+    assert smoke.index(url, store, jobs, _github(repo), embeddings, llm) == repo_id
+    assert "no index cost" in capsys.readouterr().out
+    assert _rows("SELECT count(*) FROM snapshots") == [(1,)]

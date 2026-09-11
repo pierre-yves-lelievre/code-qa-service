@@ -631,7 +631,8 @@ from `{detail, code}`.
 ## Phase 10 — Ship (45 min)
 
 - Switch `.env` to `PROVIDERS=real` with both keys. This is the first moment any API is called.
-- `make smoke` from a fresh clone on `tests/fixtures/py_app` (cents).
+- `make smoke` on `pallets/markupsafe` (cents): index it and ask one question. A local fixture
+  cannot be cloned through the GitHub client, so the smoke uses a small public repo.
 - Index the golden repo once (`make eval` does it if needed; expect well under a dollar).
 - `make eval` against the demo repo; paste the table into the README. The planner and answer
   calls send no sampling setting (the SDK has none), so runs are compared as they are, without a
