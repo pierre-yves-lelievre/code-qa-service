@@ -298,11 +298,13 @@ function Summary({
           href={repo.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex max-w-full items-center gap-2 font-mono text-sm font-semibold text-slate-900 transition-colors hover:text-accent"
+          className="inline-flex max-w-full items-start gap-2 font-mono text-sm font-semibold text-slate-900 transition-colors hover:text-accent [&>svg]:mt-0.5"
         >
           {GITHUB}
-          <span className="truncate">
-            {repo.owner}/{repo.name}
+          {/* Wraps at "/" or a hyphen first; only one over-long segment breaks mid-word. */}
+          <span className="min-w-0 break-words">
+            {repo.owner}/<wbr />
+            {repo.name}
           </span>
         </a>
         <p className="mt-2">

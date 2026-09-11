@@ -23,6 +23,10 @@ const MARK = (
   </span>
 );
 
+// A status pill on the dark header.
+const PILL =
+  "items-center gap-1.5 rounded-md bg-white/5 px-2 py-0.5 text-xs text-slate-400 ring-1 ring-white/10";
+
 /** The repository id in `?repo=`, or null. */
 function repoFromUrl(): number | null {
   const value = new URLSearchParams(window.location.search).get("repo");
@@ -41,7 +45,7 @@ export default function App() {
   const [job, setJob] = useState<IndexAccepted | null>(null);
   const [alreadyIndexed, setAlreadyIndexed] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [providers, setProviders] = useState<HealthResponse["providers"] | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
 
   /** Back to the search: no repository, no job, nothing in the URL. */
   function reset() {
@@ -53,11 +57,11 @@ export default function App() {
   }
 
   useEffect(() => {
-    // Cosmetic: the pill says which providers answer, so a failed check shows nothing.
-    api<HealthResponse>("GET", "/health").then(
-      (health) => setProviders(health.providers),
-      () => setProviders(null),
-    );
+    // Read the body whatever the status: a degraded /health answers 503 with the same shape.
+    // Cosmetic, so a failed check shows no pills rather than an error.
+    fetch("/health")
+      .then((response) => response.json() as Promise<HealthResponse>)
+      .then(setHealth, () => setHealth(null));
   }, []);
 
   useEffect(() => {
@@ -86,6 +90,7 @@ export default function App() {
   }, [repoId]);
 
   const loading = repoId !== null && repo === null && job === null;
+  const sha = repo?.snapshot?.commit_sha?.slice(0, 7);
   const progress = (
     <IndexProgress
       job={job}
@@ -102,25 +107,42 @@ export default function App() {
   );
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-20 border-b border-slate-200 bg-white">
+      <header className="sticky top-0 z-20 border-b border-slate-800 bg-slate-900">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             {MARK}
             <div className="min-w-0">
-              <p className="text-base leading-tight font-semibold tracking-tight text-slate-900">
+              <p className="text-base leading-tight font-semibold tracking-tight text-white">
                 Code Q&amp;A
               </p>
-              <p className="hidden truncate text-xs text-slate-500 sm:block">Answers that cite the code.</p>
+              <p className="hidden truncate text-xs text-slate-400 sm:block">Answers that cite the code.</p>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-3">
-            {providers === "fake" && (
+          <div className="flex shrink-0 items-center gap-2">
+            {health && (
+              <span className={`${PILL} hidden md:inline-flex`}>
+                DB
+                <span
+                  className={`size-1.5 rounded-full ${health.database.reachable ? "bg-emerald-400" : "bg-red-400"}`}
+                />
+                <span className="text-slate-200">{health.database.reachable ? "ok" : "down"}</span>
+              </span>
+            )}
+            {health && (
               <span
-                className="badge gap-1.5 bg-white text-slate-600 ring-slate-300"
-                title="PROVIDERS=fake: fake vectors and canned answers"
+                className={`${PILL} inline-flex`}
+                title={
+                  health.providers === "fake"
+                    ? "PROVIDERS=fake: fake vectors and canned answers"
+                    : "PROVIDERS=real: Voyage embeddings and Claude answers"
+                }
               >
-                <span className="size-1.5 rounded-full bg-slate-400" />
-                fake providers
+                providers · <span className="text-slate-200">{health.providers}</span>
+              </span>
+            )}
+            {sha && (
+              <span className={`${PILL} hidden sm:inline-flex`} title={repo?.snapshot?.commit_sha ?? ""}>
+                snapshot · <span className="font-mono text-slate-200">{sha}</span>
               </span>
             )}
             {repo && (
@@ -129,7 +151,7 @@ export default function App() {
                   setError(null);
                   reset();
                 }}
-                className="btn-secondary py-1.5"
+                className="ml-1 rounded-lg bg-white/10 px-3 py-1.5 text-sm font-medium text-white ring-1 ring-white/15 transition-colors hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
               >
                 <span className="sm:hidden">Change</span>
                 <span className="hidden sm:inline">Change repository</span>

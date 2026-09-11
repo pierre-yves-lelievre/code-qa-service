@@ -207,16 +207,16 @@ export default function RepoSearch({ onStarted }: { onStarted: (job: IndexAccept
             {STEPS.map((step, index) => (
               <li
                 key={step.title}
-                className="relative rounded-xl bg-white/80 p-4 ring-1 ring-slate-900/5 backdrop-blur-sm"
+                className="relative rounded-xl bg-slate-900 p-4 shadow-sm ring-1 ring-slate-900/10"
               >
                 <div className="flex items-center gap-2.5">
-                  <span className="flex size-7 items-center justify-center rounded-lg bg-accent-soft text-accent">
+                  <span className="flex size-7 items-center justify-center rounded-lg bg-white/10 text-indigo-300">
                     {step.icon}
                   </span>
-                  <span className="text-sm font-semibold text-slate-900">{step.title}</span>
-                  <span className="ml-auto font-mono text-xs text-slate-400">0{index + 1}</span>
+                  <span className="text-sm font-semibold text-white">{step.title}</span>
+                  <span className="ml-auto font-mono text-xs text-slate-500">0{index + 1}</span>
                 </div>
-                <p className="mt-2.5 text-sm text-slate-600">{step.text}</p>
+                <p className="mt-2.5 text-sm text-slate-300">{step.text}</p>
                 {index < STEPS.length - 1 && (
                   <span
                     aria-hidden="true"

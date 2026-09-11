@@ -15,6 +15,9 @@ const TIER_BORDER: Record<Tier, string> = {
   vector: "border-l-tier-vector",
 };
 
+// The chunk kinds with a chip colour in index.css; anything else gets a neutral chip.
+const KINDS = new Set(["function", "method", "class", "type", "module", "window", "manifest"]);
+
 const EXTERNAL = (
   <svg
     viewBox="0 0 24 24"
@@ -123,6 +126,11 @@ export default function Sources({
                 >
                   Ask about this
                 </button>
+                <span
+                  className={`badge ${KINDS.has(source.kind) ? `kind-${source.kind}` : "bg-slate-50 text-slate-600 ring-slate-200"}`}
+                >
+                  {source.kind}
+                </span>
                 {source.tier && (
                   <span className={`badge tier-${source.tier}`} title={TIER_HINT[source.tier]}>
                     {source.tier}

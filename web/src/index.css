@@ -73,6 +73,35 @@
     @apply bg-sky-50 text-sky-800 ring-sky-200;
   }
 
+  /* One muted hue per chunk kind on the source cards, clear of the three tier hues above. */
+  .kind-function {
+    @apply bg-violet-50 text-violet-700 ring-violet-200;
+  }
+
+  .kind-method {
+    @apply bg-indigo-50 text-indigo-700 ring-indigo-200;
+  }
+
+  .kind-class {
+    @apply bg-rose-50 text-rose-700 ring-rose-200;
+  }
+
+  .kind-type {
+    @apply bg-lime-50 text-lime-800 ring-lime-200;
+  }
+
+  .kind-module {
+    @apply bg-zinc-100 text-zinc-700 ring-zinc-200;
+  }
+
+  .kind-window {
+    @apply bg-slate-100 text-slate-600 ring-slate-200;
+  }
+
+  .kind-manifest {
+    @apply bg-orange-50 text-orange-700 ring-orange-200;
+  }
+
   .error-note {
     @apply rounded-md border-l-2 border-red-500 bg-red-50 px-3 py-2 text-sm text-red-800;
   }
