@@ -643,8 +643,7 @@ from `{detail, code}`.
 - README written by the author (sections a–i of the brief) including a **Security** section:
   threat model (untrusted repository content, secrets, resource exhaustion, input injection), what
   v0 does about each, and what production adds (auth, secrets manager, egress allow-list, TLS at
-  the edge, provider data-handling choices, `queries` retention). Also `docs/ai-workflow.md` and
-  `docs/merge-into-sidecar.md`.
+  the edge, provider data-handling choices, `queries` retention). Also `docs/ai-workflow.md`.
 - README limitations to state plainly: the validity check cannot catch a real source cited for a
   claim it does not support (needs a judge); follow-ups depend on the planner rewrite; TypeScript
   call graphs are not modelled.
@@ -653,5 +652,5 @@ from `{detail, code}`.
 
 **Commits**
 1. `docs: README, architecture, decisions, security, next steps`
-2. `docs: ai workflow and merge notes`
+2. `docs: ai workflow`
 3. `chore: screenshots`
