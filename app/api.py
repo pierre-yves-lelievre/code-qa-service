@@ -19,6 +19,7 @@ from app.errors import (
     InvalidRepoUrlError,
     JobNotFoundError,
     ProviderError,
+    QueryNotFoundError,
     RepoNotFoundError,
     RepoNotIndexedError,
     RepoTooLargeError,
@@ -35,6 +36,8 @@ from app.schemas import (
     AskResponse,
     DatabaseHealth,
     ErrorResponse,
+    FeedbackRequest,
+    FeedbackResponse,
     HealthResponse,
     IndexAccepted,
     IndexRequest,
@@ -247,6 +250,7 @@ def ask_question(
     )
     return AskResponse(
         conversation_id=result.conversation_id,
+        query_id=result.query_id,
         answer=result.answer,
         not_found=result.not_found,
         sources=[
@@ -329,3 +333,23 @@ def get_index_job(job_id: str, jobs: Annotated[JobStore, Depends(get_jobs)]) -> 
         raise JobNotFoundError()
     fields = asdict(job)
     return JobResponse(job_id=fields.pop("id"), **fields)
+
+
+@router.post(
+    "/queries/{query_id}/feedback",
+    response_model=FeedbackResponse,
+    summary="Rate an answer",
+    description=(
+        "Stores a thumbs up or down on one answer, by the `query_id` that /ask returned; "
+        "`null` clears it. Thumbs-down answers are the candidates for new golden eval cases."
+    ),
+    responses=_errors(QueryNotFoundError),
+)
+def rate_answer(
+    query_id: int, body: FeedbackRequest, store: Annotated[ChunkStore, Depends(get_store)]
+) -> FeedbackResponse:
+    """Set or clear the rating on one answer; 404 when the id has no logged answer."""
+    if not store.set_feedback(query_id, body.feedback):
+        raise QueryNotFoundError()
+    log.info("feedback_recorded", query_id=query_id, feedback=body.feedback)
+    return FeedbackResponse(query_id=query_id, feedback=body.feedback)

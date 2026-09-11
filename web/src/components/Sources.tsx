@@ -1,4 +1,12 @@
+import { useLayoutEffect, useRef, useState } from "react";
 import type { Source, Tier } from "../api";
+
+// What each retrieval tier means; the badge's tooltip here and in the trace.
+export const TIER_HINT: Record<Tier, string> = {
+  symbol: "Exact name match",
+  fts: "Keyword match",
+  vector: "Semantic similarity",
+};
 
 // The code panel's left border, in the tier's colour (the badge above uses the same hue).
 const TIER_BORDER: Record<Tier, string> = {
@@ -22,8 +30,52 @@ const EXTERNAL = (
   </svg>
 );
 
+/** The excerpt as an editor panel: line numbers from `start_line`, a fade when lines overflow. */
+function CodePanel({ source }: { source: Source }) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (element) setOverflows(element.scrollWidth > element.clientWidth + 1);
+  }, [source.excerpt]);
+  // The excerpt drops each chunk's header line, so its first line is `start_line`.
+  const code = source.excerpt.split("\n");
+  return (
+    <div
+      className={`relative border-l-[3px] bg-slate-900 ${source.tier ? TIER_BORDER[source.tier] : "border-l-slate-600"}`}
+    >
+      <div ref={scroller} className="max-h-72 overflow-auto">
+        <div className="min-w-max py-3 font-mono text-[12.5px] leading-6 text-slate-100">
+          {code.map((line, i) => (
+            <div key={i} className="flex">
+              <span className="sticky left-0 w-11 shrink-0 bg-slate-900 pr-3 text-right text-slate-500 tabular-nums select-none">
+                {source.start_line + i}
+              </span>
+              <span className="pr-8 whitespace-pre">{line || " "}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      {overflows && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 right-0 w-16 bg-linear-to-l from-slate-900 to-transparent"
+        />
+      )}
+    </div>
+  );
+}
+
 /** The cited chunks, in first-cited order: `path:lines` linked to GitHub, and the excerpt as code. */
-export default function Sources({ sources, anchor }: { sources: Source[]; anchor: string }) {
+export default function Sources({
+  sources,
+  anchor,
+  onAskAbout,
+}: {
+  sources: Source[];
+  anchor: string;
+  onAskAbout: (question: string) => void;
+}) {
   if (sources.length === 0) return null;
   return (
     <div>
@@ -33,8 +85,6 @@ export default function Sources({ sources, anchor }: { sources: Source[]; anchor
           const lines = `${source.path}:${source.start_line}–${source.end_line}`;
           // The link is built by the server; anything else is shown as text, never as a link.
           const linkable = source.github_url.startsWith("https://github.com/");
-          // The excerpt drops each chunk's header line, so its first line is `start_line`.
-          const code = source.excerpt.split("\n");
           return (
             <li
               key={lines}
@@ -66,24 +116,20 @@ export default function Sources({ sources, anchor }: { sources: Source[]; anchor
                     {source.qualname}
                   </code>
                 )}
+                <button
+                  type="button"
+                  onClick={() => onAskAbout(`Explain ${source.qualname ?? source.path}`)}
+                  className="ml-auto rounded-md px-1.5 py-0.5 font-medium text-accent transition-colors hover:bg-accent-soft"
+                >
+                  Ask about this
+                </button>
                 {source.tier && (
-                  <span className={`badge ml-auto tier-${source.tier}`}>{source.tier}</span>
+                  <span className={`badge tier-${source.tier}`} title={TIER_HINT[source.tier]}>
+                    {source.tier}
+                  </span>
                 )}
               </div>
-              <div
-                className={`max-h-72 overflow-auto border-l-[3px] bg-slate-900 ${source.tier ? TIER_BORDER[source.tier] : "border-l-slate-600"}`}
-              >
-                <div className="min-w-max py-3 font-mono text-[12.5px] leading-6 text-slate-100">
-                  {code.map((line, i) => (
-                    <div key={i} className="flex">
-                      <span className="sticky left-0 w-14 shrink-0 bg-slate-900 pr-4 text-right text-slate-500 tabular-nums select-none">
-                        {source.start_line + i}
-                      </span>
-                      <span className="pr-6 whitespace-pre">{line || " "}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <CodePanel source={source} />
             </li>
           );
         })}

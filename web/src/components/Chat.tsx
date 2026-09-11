@@ -1,6 +1,6 @@
-import { type FormEvent, type KeyboardEvent, type ReactNode, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useRef, useState } from "react";
 import Markdown from "react-markdown";
-import { api, type AskResponse, errorText, type RepoResponse } from "../api";
+import { api, type AskResponse, errorText, type Feedback, type RepoResponse } from "../api";
 import Sources from "./Sources";
 import Trace from "./Trace";
 
@@ -38,6 +38,9 @@ const MARKDOWN_STYLE =
   "[&_pre]:leading-relaxed [&_pre]:text-slate-100 [&_pre_code]:bg-transparent " +
   "[&_pre_code]:p-0 [&_strong]:font-semibold [&_strong]:text-slate-900 [&_ul]:list-disc " +
   "[&_ul]:pl-5";
+
+// When the answer ends in a paragraph, that paragraph flows inline so the chips close it.
+const CHIPS_INLINE = "[&>p:nth-last-child(2)]:inline";
 
 const ICON = "size-4 shrink-0";
 
@@ -102,14 +105,85 @@ const SPARKLE = (
   </svg>
 );
 
+/** A thumb, pointing up, or down when flipped. */
+function thumb(flipped: boolean) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={`size-3.5 ${flipped ? "-scale-y-100" : ""}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M7 10v12" />
+      <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
+    </svg>
+  );
+}
+
 interface Turn {
   question: string;
   response: AskResponse | null;
   error: string | null;
 }
 
-/** One answer: a not-found badge, the markdown, citation chips, notes, its sources and trace. */
-function Answer({ response, anchor }: { response: AskResponse; anchor: string }) {
+/** Thumbs up or down on one answer; clicking the chosen one again clears it. */
+function Rating({ queryId }: { queryId: number }) {
+  const [vote, setVote] = useState<Feedback>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  /** Send the new vote; put the old one back if the server refuses it. */
+  async function rate(choice: "up" | "down") {
+    const previous = vote;
+    const next = vote === choice ? null : choice;
+    setVote(next);
+    setError(null);
+    try {
+      await api("POST", `/queries/${queryId}/feedback`, { feedback: next });
+    } catch (e) {
+      setVote(previous);
+      setError(errorText(e));
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1 text-xs text-slate-500">
+      <span className="mr-1">Helpful?</span>
+      {(["up", "down"] as const).map((choice) => (
+        <button
+          key={choice}
+          type="button"
+          onClick={() => rate(choice)}
+          aria-pressed={vote === choice}
+          aria-label={choice === "up" ? "Helpful" : "Not helpful"}
+          className={`rounded-md p-1.5 transition-colors ${
+            vote === choice
+              ? "bg-accent-soft text-accent"
+              : "text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          }`}
+        >
+          {thumb(choice === "down")}
+        </button>
+      ))}
+      {error && <span className="ml-2 text-red-700">{error}</span>}
+    </div>
+  );
+}
+
+/** One answer: a not-found badge, the markdown closed by citation chips, notes, rating, sources, trace. */
+function Answer({
+  response,
+  anchor,
+  onAskAbout,
+}: {
+  response: AskResponse;
+  anchor: string;
+  onAskAbout: (question: string) => void;
+}) {
+  const cited = response.sources.length > 0;
   return (
     <div className="space-y-4">
       {response.not_found && (
@@ -117,27 +191,26 @@ function Answer({ response, anchor }: { response: AskResponse; anchor: string })
           Not found in this repository
         </span>
       )}
-      <div className={MARKDOWN_STYLE}>
+      <div className={`${MARKDOWN_STYLE} ${cited ? CHIPS_INLINE : ""}`}>
         <Markdown skipHtml allowedElements={ALLOWED_ELEMENTS} unwrapDisallowed>
           {response.answer}
         </Markdown>
+        {cited && (
+          <span className="ml-1.5 inline-flex flex-wrap gap-1 align-[1px]">
+            {response.sources.map((source, index) => (
+              // An in-page anchor to the card below; never a URL from the model.
+              <a
+                key={`${source.path}:${source.start_line}`}
+                href={`#${anchor}-${index + 1}`}
+                title={source.path}
+                className="inline-flex h-5 items-center rounded bg-slate-100 px-1.5 font-mono text-[11px] text-slate-600 ring-1 ring-slate-200 transition-colors hover:bg-accent-soft hover:text-accent hover:ring-indigo-200"
+              >
+                [{index + 1}]
+              </a>
+            ))}
+          </span>
+        )}
       </div>
-      {response.sources.length > 0 && (
-        <p className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-          <span className="mr-0.5">Cited</span>
-          {response.sources.map((source, index) => (
-            // An in-page anchor to the card below; never a URL from the model.
-            <a
-              key={`${source.path}:${source.start_line}`}
-              href={`#${anchor}-${index + 1}`}
-              title={source.path}
-              className="rounded-md bg-white px-1.5 py-0.5 font-mono text-slate-700 ring-1 ring-slate-200 transition-colors hover:bg-accent-soft hover:text-accent hover:ring-indigo-200"
-            >
-              [{index + 1}]
-            </a>
-          ))}
-        </p>
-      )}
       {response.notes.length > 0 && (
         <ul className="space-y-1 text-xs text-slate-500">
           {response.notes.map((note) => (
@@ -145,7 +218,8 @@ function Answer({ response, anchor }: { response: AskResponse; anchor: string })
           ))}
         </ul>
       )}
-      <Sources sources={response.sources} anchor={anchor} />
+      <Rating queryId={response.query_id} />
+      <Sources sources={response.sources} anchor={anchor} onAskAbout={onAskAbout} />
       <Trace response={response} />
     </div>
   );
@@ -169,6 +243,7 @@ export default function Chat({ repo, aside }: { repo: RepoResponse; aside: React
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const composer = useRef<HTMLTextAreaElement>(null);
   const suggested = repo.suggested_questions ?? [];
 
   /** Send one question, continuing the conversation when there is one. */
@@ -195,6 +270,12 @@ export default function Chat({ repo, aside }: { repo: RepoResponse; aside: React
     setBusy(false);
   }
 
+  /** Put a question in the composer, ready to edit or send. */
+  function askAbout(question: string) {
+    setDraft(question);
+    composer.current?.focus();
+  }
+
   /** Drop the conversation: the next question starts a new one. */
   function newChat() {
     setTurns([]);
@@ -216,128 +297,146 @@ export default function Chat({ repo, aside }: { repo: RepoResponse; aside: React
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[20rem_minmax(0,1fr)] lg:items-start xl:grid-cols-[22rem_minmax(0,1fr)]">
-      <aside className="space-y-6 lg:sticky lg:top-24 lg:-mx-1 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto lg:px-1 lg:pb-1">
-        {aside}
-        {suggested.length > 0 && (
-          // Below lg the empty chat shows the same questions right under this panel.
-          <section className={`panel p-5 ${turns.length === 0 ? "hidden lg:block" : ""}`}>
-            <h2 className="caption">Suggested questions</h2>
-            <ul className="mt-3 space-y-2">
-              {suggested.map((question) => (
-                <li key={question}>
-                  <button onClick={() => ask(question)} disabled={busy} className={SUGGESTION}>
-                    {SPARKLE}
-                    <span>{question}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-      </aside>
+    <div className="relative isolate">
+      {/* A fainter echo of the hero's wash behind the top of the page. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -inset-x-4 -top-8 -z-10 h-80 opacity-60 [mask-image:radial-gradient(ellipse_75%_100%_at_50%_0%,black_25%,transparent_100%)] sm:-inset-x-6"
+      >
+        <div className="hero-wash absolute inset-0" />
+      </div>
 
-      <section className="panel flex min-h-[36rem] flex-col">
-        <div className="flex items-center justify-between gap-4 border-b border-slate-100 px-5 py-3.5">
-          <div className="min-w-0">
-            <h2 className="font-display text-2xl leading-none text-slate-900">Chat</h2>
-            <p className="mt-1 truncate text-xs text-slate-500">
-              About {repo.owner}/{repo.name}
-            </p>
-          </div>
-          {turns.length > 0 && (
-            <button onClick={newChat} disabled={busy} className="btn-secondary">
-              New chat
-            </button>
+      <div className="grid gap-6 lg:grid-cols-[20rem_minmax(0,1fr)] lg:items-start xl:grid-cols-[22rem_minmax(0,1fr)]">
+        <aside className="space-y-6 lg:sticky lg:top-24 lg:-mx-1 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto lg:px-1 lg:pb-1">
+          {aside}
+          {suggested.length > 0 && (
+            // Below lg the empty chat shows the same questions right under this panel.
+            <section className={`panel p-5 ${turns.length === 0 ? "hidden lg:block" : ""}`}>
+              <h2 className="caption">Suggested questions</h2>
+              <ul className="mt-3 space-y-2">
+                {suggested.map((question) => (
+                  <li key={question}>
+                    <button onClick={() => ask(question)} disabled={busy} className={SUGGESTION}>
+                      {SPARKLE}
+                      <span>{question}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
           )}
-        </div>
+        </aside>
 
-        <div className="flex-1 px-5 py-6">
-          {turns.length === 0 ? (
-            <div className="flex h-full min-h-64 flex-col items-center justify-center text-center">
-              {MARK}
-              <p className="mt-4 font-display text-3xl leading-tight text-slate-900">
-                Ask about {repo.owner}/{repo.name}
+        <section className="panel flex min-h-[36rem] flex-col">
+          <div className="flex items-center justify-between gap-4 border-b border-slate-100 px-5 py-3.5">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-slate-900">Chat</h2>
+              <p className="truncate font-mono text-xs text-slate-500">
+                {repo.owner}/{repo.name}
               </p>
-              <p className="mt-2 max-w-sm text-sm text-slate-500">
-                Answers cite the files and lines they come from. Try one of these, or write your own
-                below.
-              </p>
-              {suggested.length > 0 && (
-                <ul className="mt-6 grid w-full max-w-2xl gap-2 text-left sm:grid-cols-2">
-                  {suggested.map((question) => (
-                    <li key={question}>
-                      <button onClick={() => ask(question)} disabled={busy} className={SUGGESTION}>
-                        {SPARKLE}
-                        <span>{question}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
             </div>
-          ) : (
-            <ol className="space-y-10">
-              {turns.map((turn, index) => (
-                <li key={index} className="space-y-4">
-                  <div className="flex justify-end">
-                    <p className="max-w-[85%] rounded-2xl rounded-br-md bg-accent-soft px-4 py-2.5 text-sm whitespace-pre-wrap text-slate-900 ring-1 ring-indigo-100">
-                      {turn.question}
-                    </p>
-                  </div>
-                  <div className="flex gap-3">
-                    {MARK}
-                    <div className="min-w-0 flex-1">
-                      {turn.response ? (
-                        <Answer response={turn.response} anchor={`turn-${index + 1}-source`} />
-                      ) : turn.error ? (
-                        <p className="error-note">{turn.error}</p>
-                      ) : (
-                        <Pending />
-                      )}
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          )}
-        </div>
-
-        <form
-          onSubmit={submit}
-          className="sticky bottom-0 rounded-b-xl border-t border-slate-100 bg-white/95 px-5 py-4 backdrop-blur"
-        >
-          <div
-            className={`flex items-end gap-2 rounded-xl p-1.5 pl-3 shadow-sm ring-1 ring-slate-300 transition focus-within:ring-2 focus-within:ring-accent ${busy ? "animate-pulse bg-slate-50" : "bg-white"}`}
-          >
-            <label htmlFor="question" className="sr-only">
-              Question
-            </label>
-            <textarea
-              id="question"
-              value={draft}
-              maxLength={MAX_QUESTION}
-              rows={1}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={onKeyDown}
-              disabled={busy}
-              placeholder={turns.length ? "Ask a follow-up…" : "Ask about the code…"}
-              className="field-sizing-content max-h-40 min-h-9 w-full resize-none bg-transparent py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed"
-            />
-            <button
-              type="submit"
-              disabled={busy || !draft.trim()}
-              aria-label={busy ? "Answering" : "Ask"}
-              className="btn-primary size-9 shrink-0 p-0"
-            >
-              {busy ? SPINNER : SEND}
-            </button>
+            {turns.length > 0 && (
+              <button onClick={newChat} disabled={busy} className="btn-secondary">
+                New chat
+              </button>
+            )}
           </div>
-          <p className="mt-2 text-xs text-slate-400">
-            {busy ? "Answering…" : "Enter to send · Shift+Enter for a new line"}
-          </p>
-        </form>
-      </section>
+
+          <div className="flex-1 px-5 py-6">
+            {turns.length === 0 ? (
+              <div className="flex h-full min-h-64 flex-col items-center justify-center text-center">
+                {MARK}
+                <p className="mt-4 font-display text-4xl leading-tight text-slate-900">
+                  Ask about the code
+                </p>
+                <p className="mt-1 font-mono text-sm text-slate-600">
+                  {repo.owner}/{repo.name}
+                </p>
+                <p className="mt-3 max-w-sm text-sm text-slate-500">
+                  Answers cite the files and lines they come from. Try one of these, or write your
+                  own below.
+                </p>
+                {suggested.length > 0 && (
+                  <ul className="mt-6 grid w-full max-w-2xl gap-2 text-left sm:grid-cols-2">
+                    {suggested.map((question) => (
+                      <li key={question}>
+                        <button onClick={() => ask(question)} disabled={busy} className={SUGGESTION}>
+                          {SPARKLE}
+                          <span>{question}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ) : (
+              <ol className="space-y-10">
+                {turns.map((turn, index) => (
+                  <li key={index} className="space-y-4">
+                    <div className="flex justify-end">
+                      <p className="max-w-[85%] rounded-2xl rounded-br-md bg-accent-soft px-4 py-2.5 text-sm whitespace-pre-wrap text-slate-900 ring-1 ring-indigo-100">
+                        {turn.question}
+                      </p>
+                    </div>
+                    <div className="flex gap-3">
+                      {MARK}
+                      <div className="min-w-0 flex-1">
+                        {turn.response ? (
+                          <Answer
+                            response={turn.response}
+                            anchor={`turn-${index + 1}-source`}
+                            onAskAbout={askAbout}
+                          />
+                        ) : turn.error ? (
+                          <p className="error-note">{turn.error}</p>
+                        ) : (
+                          <Pending />
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+
+          <form
+            onSubmit={submit}
+            className="sticky bottom-0 rounded-b-xl border-t border-slate-100 bg-white/95 px-5 py-4 backdrop-blur"
+          >
+            <div
+              className={`flex items-end gap-2 rounded-xl p-1.5 pl-3 shadow-sm ring-1 ring-slate-300 transition focus-within:ring-2 focus-within:ring-accent ${busy ? "animate-pulse bg-slate-50" : "bg-white"}`}
+            >
+              <label htmlFor="question" className="sr-only">
+                Question
+              </label>
+              <textarea
+                id="question"
+                ref={composer}
+                value={draft}
+                maxLength={MAX_QUESTION}
+                rows={1}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={onKeyDown}
+                disabled={busy}
+                placeholder={turns.length ? "Ask a follow-up…" : "Ask about the code…"}
+                className="field-sizing-content max-h-40 min-h-9 w-full resize-none bg-transparent py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 disabled:cursor-not-allowed"
+              />
+              <button
+                type="submit"
+                disabled={busy || !draft.trim()}
+                aria-label={busy ? "Answering" : "Ask"}
+                className="btn-primary size-9 shrink-0 p-0"
+              >
+                {busy ? SPINNER : SEND}
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-slate-400">
+              {busy ? "Answering…" : "Enter to send · Shift+Enter for a new line"}
+            </p>
+          </form>
+        </section>
+      </div>
     </div>
   );
 }

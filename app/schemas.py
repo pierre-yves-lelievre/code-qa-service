@@ -184,6 +184,7 @@ class AskResponse(BaseModel):
     """An answer with its cited sources, retrieval trace, timings, tokens and snapshot."""
 
     conversation_id: UUID
+    query_id: int = Field(..., json_schema_extra={"example": 42})
     answer: str = Field(
         ..., json_schema_extra={"example": "`login_access_token` in `login.py` issues the token."}
     )
@@ -194,6 +195,19 @@ class AskResponse(BaseModel):
     tokens: Tokens
     snapshot: SnapshotRef
     notes: list[str] = Field(..., json_schema_extra={"example": []})
+
+
+class FeedbackRequest(BaseModel):
+    """A rating for one answer: thumbs up, thumbs down, or null to clear it."""
+
+    feedback: Literal["up", "down"] | None = Field(..., json_schema_extra={"example": "down"})
+
+
+class FeedbackResponse(BaseModel):
+    """The rating now stored on the answer."""
+
+    query_id: int = Field(..., json_schema_extra={"example": 42})
+    feedback: Literal["up", "down"] | None = Field(..., json_schema_extra={"example": "down"})
 
 
 class IndexRequest(BaseModel):

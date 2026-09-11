@@ -70,6 +70,7 @@ export default function RepoSearch({ onStarted }: { onStarted: (job: IndexAccept
   const [hits, setHits] = useState<RepoHit[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [pasting, setPasting] = useState(false);
   const [url, setUrl] = useState("");
   const [posting, setPosting] = useState(false);
   const [indexError, setIndexError] = useState<string | null>(null);
@@ -173,6 +174,34 @@ export default function RepoSearch({ onStarted }: { onStarted: (job: IndexAccept
         </div>
         {searchError && <p className="error-note mt-4">{searchError}</p>}
 
+        {pasting ? (
+          <form onSubmit={submitUrl} className="mx-auto mt-5 flex max-w-xl gap-2">
+            <label htmlFor="url" className="sr-only">
+              GitHub URL
+            </label>
+            <input
+              id="url"
+              value={url}
+              maxLength={512}
+              onChange={(event) => setUrl(event.target.value)}
+              placeholder="https://github.com/owner/repo"
+              className="input font-mono"
+              autoFocus
+            />
+            <button type="submit" className="btn-secondary shrink-0" disabled={posting || !url.trim()}>
+              Index
+            </button>
+          </form>
+        ) : (
+          <p className="mt-4 text-center text-sm text-slate-500">
+            Have a URL?{" "}
+            <button type="button" onClick={() => setPasting(true)} className="link font-medium">
+              Paste it
+            </button>
+          </p>
+        )}
+        {indexError && <p className="error-note mx-auto mt-3 max-w-xl">{indexError}</p>}
+
         {!query.trim() && (
           <ol className="mt-12 grid gap-3 sm:grid-cols-3">
             {STEPS.map((step, index) => (
@@ -213,7 +242,7 @@ export default function RepoSearch({ onStarted }: { onStarted: (job: IndexAccept
                     href={hit.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="link text-sm font-semibold break-all"
+                    className="link font-mono text-sm font-medium break-all"
                   >
                     {hit.full_name}
                   </a>
@@ -241,26 +270,6 @@ export default function RepoSearch({ onStarted }: { onStarted: (job: IndexAccept
             ))}
           </ul>
         )}
-
-        <form onSubmit={submitUrl} className="mt-10">
-          <label htmlFor="url" className="text-sm font-medium text-slate-700">
-            Or paste a GitHub URL
-          </label>
-          <div className="mt-2 flex gap-2">
-            <input
-              id="url"
-              value={url}
-              maxLength={512}
-              onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://github.com/owner/repo"
-              className="input font-mono"
-            />
-            <button type="submit" className="btn-secondary shrink-0" disabled={posting || !url.trim()}>
-              Index
-            </button>
-          </div>
-        </form>
-        {indexError && <p className="error-note mt-3">{indexError}</p>}
       </div>
     </div>
   );

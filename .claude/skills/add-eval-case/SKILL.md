@@ -10,6 +10,21 @@ The golden set in `evals/golden.json` is pinned to one commit of one repository 
 checks that chunk against the top five full hits (hit@5), or checks that a `null` case comes back
 `not_found`.
 
+## 0. Look for candidates
+
+Answers rated thumbs-down in the UI are the best source of new cases. List the recent ones:
+
+```bash
+docker compose exec -T db psql -U postgres -d codeqa -c \
+  "SELECT q.id, r.owner || '/' || r.name AS repo, left(q.question, 100) AS question, q.not_found
+   FROM queries q JOIN repos r ON r.id = q.repo_id
+   WHERE q.feedback = 'down' ORDER BY q.id DESC LIMIT 20"
+```
+
+Only rows on the golden set's repository can become cases. Show the author the list and let them
+pick; a thumbs-down says the answer was wrong, not where the right one lives, so step 1 still
+needs its `expect`.
+
 ## 1. Collect the case
 
 Ask the author for anything missing:

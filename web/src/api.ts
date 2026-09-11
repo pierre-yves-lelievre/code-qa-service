@@ -144,6 +144,7 @@ export interface SnapshotRef {
 
 export interface AskResponse {
   conversation_id: string;
+  query_id: number;
   answer: string;
   not_found: boolean;
   sources: Source[];
@@ -152,6 +153,17 @@ export interface AskResponse {
   tokens: Tokens;
   snapshot: SnapshotRef;
   notes: string[];
+}
+
+export type Feedback = "up" | "down" | null;
+
+export interface FeedbackRequest {
+  feedback: Feedback;
+}
+
+export interface FeedbackResponse {
+  query_id: number;
+  feedback: Feedback;
 }
 
 // ── Index ─────────────────────────────────────────────────────────────────────

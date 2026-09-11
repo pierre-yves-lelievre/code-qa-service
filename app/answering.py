@@ -110,6 +110,7 @@ class Answer:
     """What /ask returns: the checked answer, the trace, timings, tokens and snapshot."""
 
     conversation_id: str
+    query_id: int
     answer: str
     not_found: bool
     sources: list[Source]
@@ -361,9 +362,9 @@ def ask(
             "total_ms": _ms(started),
         }
 
-    def record(answer: str | None, sources: list[Source], not_found: bool) -> None:
-        """Log the request to `queries`; the stored sources are enough to brief them again."""
-        store.record_query(
+    def record(answer: str | None, sources: list[Source], not_found: bool) -> int:
+        """Log the request to `queries` and return its id; the stored sources brief them again."""
+        return store.record_query(
             request_id=request_id,
             repo_id=repo_id,
             snapshot_id=snapshot.id,
@@ -403,7 +404,7 @@ def ask(
         checked = check(replace(completion, text=text), briefing.sources, repo.url, floor, True)
     else:  # nothing to cite: no call
         text, checked = f"{NOT_FOUND}.", Checked([], True, [])
-    record(text, checked.sources, checked.not_found)
+    query_id = record(text, checked.sources, checked.not_found)
     log.info(
         "ask_done",
         repo_id=repo_id,
@@ -419,6 +420,7 @@ def ask(
     )
     return Answer(
         conversation_id=conversation,
+        query_id=query_id,
         answer=text,
         not_found=checked.not_found,
         sources=checked.sources,

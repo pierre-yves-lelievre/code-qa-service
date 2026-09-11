@@ -107,10 +107,10 @@ export default function App() {
           <div className="flex min-w-0 items-center gap-3">
             {MARK}
             <div className="min-w-0">
-              <p className="font-display text-2xl leading-none text-slate-900">Code Q&amp;A</p>
-              <p className="mt-0.5 hidden truncate text-xs text-slate-500 sm:block">
-                Ask questions about a public GitHub repository; answers cite the code.
+              <p className="text-base leading-tight font-semibold tracking-tight text-slate-900">
+                Code Q&amp;A
               </p>
+              <p className="hidden truncate text-xs text-slate-500 sm:block">Answers that cite the code.</p>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-3">

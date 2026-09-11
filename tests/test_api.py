@@ -720,6 +720,19 @@ def test_the_briefing_honours_the_full_hits_and_index_lines_settings(
     assert len(index_block) == 1 + 2  # the header, then two index lines
 
 
+def test_feedback_is_stored_on_the_answer_and_an_unknown_query_is_404(
+    client, committed, mock_github, fixture_repo
+):
+    repo_id, _ = _indexed_py_app(client, mock_github, fixture_repo)
+    query_id = _ask(client, repo_id, TAX_QUESTION).json()["query_id"]
+    rated = client.post(f"/queries/{query_id}/feedback", json={"feedback": "down"})
+    assert rated.status_code == 200
+    assert rated.json() == {"query_id": query_id, "feedback": "down"}
+    assert _rows("SELECT feedback FROM queries WHERE id = %s", query_id) == [("down",)]
+    missing = client.post("/queries/999999/feedback", json={"feedback": "up"})
+    assert (missing.status_code, missing.json()["code"]) == (404, "query_not_found")
+
+
 def test_with_nothing_retrieved_no_answer_call_is_made(
     client, committed, mock_github, mock_llm, fixture_repo, monkeypatch: pytest.MonkeyPatch
 ):

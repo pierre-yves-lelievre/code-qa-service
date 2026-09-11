@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   api,
   errorText,
@@ -56,6 +56,22 @@ const GITHUB = (
   </svg>
 );
 
+// Same chevron as the trace's.
+const CHEVRON = (
+  <svg
+    viewBox="0 0 24 24"
+    className="size-3.5 shrink-0 transition-transform group-open:rotate-90"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="m9 6 6 6-6 6" />
+  </svg>
+);
+
 // GitHub's language colours, except Python, which takes its logo yellow so it never sits as a
 // second blue beside TypeScript; "text" is indexing.py's windowed, no-parser bucket.
 const LANGUAGE_COLORS: Record<string, string> = {
@@ -75,6 +91,11 @@ function languageColor(language: string, index: number): string {
 /** A count with thousands separators, or a dash when the server did not send it. */
 function fmt(value: number | undefined): string {
   return value === undefined ? "–" : value.toLocaleString();
+}
+
+/** Dollars to the cent, or "< $0.01" below one. */
+function usd(value: number): string {
+  return value < 0.01 ? "< $0.01" : `$${value.toFixed(2)}`;
 }
 
 interface Props {
@@ -140,9 +161,8 @@ function Progress({
   return (
     <section className="panel p-6">
       <p className="caption">Indexing</p>
-      <h2 className="mt-1 font-display text-3xl leading-tight break-all text-slate-900">
-        {job.owner}/{job.name}{" "}
-        <span className="font-mono text-sm text-slate-500">@ {job.branch}</span>
+      <h2 className="mt-1.5 font-mono text-lg font-medium break-all text-slate-900">
+        {job.owner}/{job.name} <span className="text-sm font-normal text-slate-500">@ {job.branch}</span>
       </h2>
       {status === "failed" ? (
         <p className="error-note mt-5">{state?.error ?? "The index job failed."}</p>
@@ -232,7 +252,7 @@ function progressCounts(progress: JobProgress): string {
   }
 }
 
-/** The sidebar: repo, commit, summary, totals, per-language breakdown, skipped and unparsed files. */
+/** The sidebar: repo, commit, summary, files and chunks, languages; the rest under Details. */
 function Summary({
   repo,
   snapshot,
@@ -244,14 +264,26 @@ function Summary({
 }) {
   const stats = snapshot.stats;
   const languages = Object.entries(stats.by_language ?? {}).sort(([, a], [, b]) => b.files - a.files);
+  const languageFiles = languages.reduce((sum, [, row]) => sum + row.files, 0);
   const skipped = Object.entries(stats.skipped ?? {});
   const embedding = stats.embedding;
-  const totals: [string, number | undefined][] = [
-    ["Files", stats.files],
-    ["Chunks", stats.chunks],
-    ["Windowed, no parser", stats.by_mode?.windows ?? 0],
-    ["Parsed with errors", stats.files_with_parse_errors],
+  const details: [string, string][] = [
+    ["Windowed, no parser", fmt(stats.by_mode?.windows ?? 0)],
+    ["Parsed with errors", fmt(stats.files_with_parse_errors)],
+    [
+      "Skipped",
+      skipped.length > 0
+        ? skipped.map(([reason, count]) => `${reason} ${count.toLocaleString()}`).join(", ")
+        : "none",
+    ],
   ];
+  if (embedding) {
+    details.push(
+      ["Embedded", `${fmt(embedding.embedded)} new · ${fmt(embedding.reused)} reused`],
+      ["Tokens", `${fmt(embedding.tokens)} · ${usd(embedding.cost_usd)}`],
+      ["Model", embedding.model],
+    );
+  }
   const indexed = snapshot.indexed_at
     ? new Date(snapshot.indexed_at).toLocaleDateString(undefined, {
         year: "numeric",
@@ -266,7 +298,7 @@ function Summary({
           href={repo.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex max-w-full items-center gap-2 text-base font-semibold text-slate-900 transition-colors hover:text-accent"
+          className="inline-flex max-w-full items-center gap-2 font-mono text-sm font-semibold text-slate-900 transition-colors hover:text-accent"
         >
           {GITHUB}
           <span className="truncate">
@@ -299,9 +331,19 @@ function Summary({
           </p>
         </div>
       )}
+      {stats.summary?.status === "failed" && (
+        <p className="text-xs text-slate-500">
+          The summary call failed, so there is no summary or suggested questions.
+        </p>
+      )}
 
       <dl className="grid grid-cols-2 gap-2">
-        {totals.map(([label, value]) => (
+        {(
+          [
+            ["Files", stats.files],
+            ["Chunks", stats.chunks],
+          ] as const
+        ).map(([label, value]) => (
           <div key={label} className="flex flex-col-reverse rounded-lg bg-slate-50 px-3 py-2.5 ring-1 ring-slate-100">
             <dt className="text-xs text-slate-500">{label}</dt>
             <dd className="text-lg font-semibold text-slate-900 tabular-nums">{fmt(value)}</dd>
@@ -318,7 +360,7 @@ function Summary({
                 key={language}
                 title={`${language === "text" ? "other" : language}: ${row.files} files`}
                 style={{
-                  width: `${(row.files / languages.reduce((sum, [, r]) => sum + r.files, 0)) * 100}%`,
+                  width: `${(row.files / languageFiles) * 100}%`,
                   backgroundColor: languageColor(language, index),
                 }}
               />
@@ -354,33 +396,22 @@ function Summary({
         </div>
       )}
 
-      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 border-t border-slate-100 pt-4 text-xs">
-        <dt className="text-slate-500">Skipped</dt>
-        <dd className="text-slate-700 tabular-nums">
-          {skipped.length > 0
-            ? skipped.map(([reason, count]) => `${reason} ${count.toLocaleString()}`).join(", ")
-            : "none"}
-        </dd>
-        {embedding && (
-          <>
-            <dt className="text-slate-500">Embedded</dt>
-            <dd className="text-slate-700 tabular-nums">
-              {fmt(embedding.embedded)} new · {fmt(embedding.reused)} reused
-            </dd>
-            <dt className="text-slate-500">Tokens</dt>
-            <dd className="text-slate-700 tabular-nums">
-              {fmt(embedding.tokens)} · ${embedding.cost_usd.toFixed(4)}
-            </dd>
-            <dt className="text-slate-500">Model</dt>
-            <dd className="font-mono text-slate-700">{embedding.model}</dd>
-          </>
-        )}
-      </dl>
-      {stats.summary?.status === "failed" && (
-        <p className="text-xs text-slate-500">
-          The summary call failed, so there is no summary or suggested questions.
-        </p>
-      )}
+      <details className="group border-t border-slate-100 pt-4">
+        <summary className="flex list-none items-center gap-1.5 text-xs font-medium text-slate-500 transition-colors select-none hover:text-slate-800 [&::-webkit-details-marker]:hidden">
+          {CHEVRON}
+          Details
+        </summary>
+        <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-xs">
+          {details.map(([label, value]) => (
+            <Fragment key={label}>
+              <dt className="text-slate-500">{label}</dt>
+              <dd className={`text-slate-700 tabular-nums ${label === "Model" ? "font-mono" : ""}`}>
+                {value}
+              </dd>
+            </Fragment>
+          ))}
+        </dl>
+      </details>
     </section>
   );
 }

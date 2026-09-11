@@ -28,12 +28,13 @@ When they disagree, ask; do not guess.
 app/
 ├── main.py           # FastAPI app, lifespan (migrations, pool), request_id middleware, SPA mount
 ├── api.py            # ALL routes: /health /repos/search /repos/{id} /index /index/{job_id} /ask
+│                     #   /queries/{id}/feedback
 ├── config.py         # Settings via pydantic-settings; `settings` singleton
 ├── errors.py         # ServiceError hierarchy + the two FastAPI handlers
 ├── schemas.py        # Pydantic request/response models, with examples
 ├── logging_setup.py  # structlog JSON + request_id contextvar   (shared, unchanged)
 ├── db.py             # psycopg pool, migrations runner
-├── migrations/       # 0001_init.sql, 0002_conversations.sql; numbered, append-only
+├── migrations/       # 0001_init.sql, 0002_conversations.sql, 0003_feedback.sql; append-only
 ├── jobs.py           # Job dataclass + Postgres JobStore (create/update/get/count_active)
 ├── github.py         # GitHubClient: search(), shallow_clone(); strict URL/branch validation
 ├── parsing.py        # tree-sitter: LANGUAGES table, queries/*.scm, file_symbols() -> rows

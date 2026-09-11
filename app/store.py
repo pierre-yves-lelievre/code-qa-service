@@ -321,13 +321,13 @@ class ChunkStore:
         timings: dict[str, int],
         tokens: dict[str, int],
         not_found: bool,
-    ) -> None:
-        """Log one /ask to `queries`; a null answer marks a failed call and is never history."""
+    ) -> int:
+        """Log one /ask to `queries` and return its id; a null answer marks a failed call."""
         with self._connect() as conn, conn.transaction():
-            conn.execute(
+            row = conn.execute(
                 "INSERT INTO queries (request_id, repo_id, snapshot_id, conversation_id, question,"
                 " answer, sources, retrievers, timings, tokens, not_found)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (
                     request_id,
                     repo_id,
@@ -341,7 +341,18 @@ class ChunkStore:
                     Jsonb(tokens),
                     not_found,
                 ),
-            )
+            ).fetchone()
+        return row[0]
+
+    def set_feedback(self, query_id: int, feedback: str | None) -> bool:
+        """Set or clear the rating on an answered query; False when there is no such answer."""
+        with self._connect() as conn, conn.transaction():
+            row = conn.execute(
+                "UPDATE queries SET feedback = %s"
+                " WHERE id = %s AND answer IS NOT NULL RETURNING id",
+                (feedback, query_id),
+            ).fetchone()
+        return row is not None
 
     def activate(self, snapshot_id: int, stats: dict[str, Any]) -> None:
         """Retire the repo's active snapshot and activate this one, in one transaction."""

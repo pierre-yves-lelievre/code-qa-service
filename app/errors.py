@@ -48,6 +48,14 @@ class JobNotFoundError(ServiceError):
     default_message = "Job not found."
 
 
+class QueryNotFoundError(ServiceError):
+    """Raised when feedback names a query id with no logged answer."""
+
+    code = "query_not_found"
+    status_code = 404
+    default_message = "Query not found."
+
+
 class RepoTooLargeError(ServiceError):
     """Raised when a repository exceeds the configured size or file-count limits."""
 
