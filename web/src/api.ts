@@ -1,5 +1,28 @@
 /** The JSON API: response types mirroring app/schemas.py, and a fetch wrapper for {detail, code}. */
 
+// ── Health ────────────────────────────────────────────────────────────────────
+
+export interface DatabaseHealth {
+  reachable: boolean;
+  vector_available: string | null;
+  vector_installed: string | null;
+}
+
+export interface KeysHealth {
+  voyage: boolean;
+  anthropic: boolean;
+  github: boolean;
+}
+
+export interface HealthResponse {
+  status: "ok" | "degraded";
+  version: string;
+  uptime_seconds: number;
+  providers: "fake" | "real";
+  database: DatabaseHealth;
+  keys: KeysHealth;
+}
+
 // ── Repositories ──────────────────────────────────────────────────────────────
 
 export interface RepoHit {

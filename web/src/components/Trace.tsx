@@ -1,28 +1,43 @@
-import type { AskResponse, LegTrace } from "../api";
+import type { AskResponse, LegTrace, Tier } from "../api";
 
+// Text only: the tier colours belong to the leg names, so statuses stay neutral unless broken.
 const STATUS_STYLE: Record<string, string> = {
-  ok: "text-emerald-700",
-  fallback: "text-amber-700",
-  or_fallback: "text-amber-700",
+  ok: "text-slate-700",
+  fallback: "text-slate-500",
+  or_fallback: "text-slate-500",
   empty: "text-slate-500",
   skipped: "text-slate-500",
   unavailable: "text-red-700",
 };
 
-const CELL = "py-0.5 pr-3";
+const CELL = "py-1 pr-3";
+const NUM = "py-1 text-right tabular-nums";
 
-/** A small key/value table with a heading. */
+const CHEVRON = (
+  <svg
+    viewBox="0 0 24 24"
+    className="size-3.5 shrink-0 transition-transform group-open:rotate-90"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="m9 6 6 6-6 6" />
+  </svg>
+);
+
+/** A small key/value table with a caption. */
 function Rows({ title, rows }: { title: string; rows: [string, string | number][] }) {
   return (
-    <table className="text-sm">
-      <caption className="text-left text-xs font-medium tracking-wide text-slate-500 uppercase">
-        {title}
-      </caption>
+    <table className="w-full table-fixed">
+      <caption className="caption mb-1 text-left">{title}</caption>
       <tbody>
         {rows.map(([label, value]) => (
-          <tr key={label}>
+          <tr key={label} className="border-t border-slate-100">
             <td className={`${CELL} text-slate-500`}>{label}</td>
-            <td className={`${CELL} text-right tabular-nums`}>
+            <td className={`${NUM} text-slate-800`}>
               {typeof value === "number" ? value.toLocaleString() : value}
             </td>
           </tr>
@@ -35,43 +50,46 @@ function Rows({ title, rows }: { title: string; rows: [string, string | number][
 /** How the answer was made: retrievers and planner, timings, tokens and the snapshot. */
 export default function Trace({ response }: { response: AskResponse }) {
   const { retrievers, timings, tokens, snapshot } = response;
-  const legs: [string, LegTrace][] = [
+  const legs: [Tier, LegTrace][] = [
     ["symbol", retrievers.symbol],
     ["fts", retrievers.fts],
     ["vector", retrievers.vector],
   ];
   return (
-    <details className="mt-3 rounded border border-slate-200 bg-white text-sm">
-      <summary className="cursor-pointer px-3 py-1.5 text-slate-600">
-        Trace · {timings.total_ms.toLocaleString()} ms · planner {retrievers.planner}
+    <details className="group rounded-lg ring-1 ring-slate-200">
+      <summary className="flex list-none items-center gap-1.5 px-3 py-2 text-xs text-slate-500 transition-colors select-none hover:text-slate-800 [&::-webkit-details-marker]:hidden">
+        {CHEVRON}
+        <span>
+          Trace · {timings.total_ms.toLocaleString()} ms · planner {retrievers.planner}
+        </span>
       </summary>
-      <div className="grid gap-4 px-3 py-2 sm:grid-cols-2">
-        <table className="text-sm">
-          <caption className="text-left text-xs font-medium tracking-wide text-slate-500 uppercase">
-            Retrievers
-          </caption>
-          <thead className="text-left text-xs text-slate-500">
+      <div className="grid items-start gap-x-8 gap-y-5 border-t border-slate-100 px-3 py-3 text-xs sm:grid-cols-2">
+        <table className="w-full table-fixed">
+          <caption className="caption mb-1 text-left">Retrievers</caption>
+          <thead className="text-left text-slate-400">
             <tr>
-              <th className={`${CELL} font-normal`}>Leg</th>
+              <th className={`${CELL} w-[34%] font-normal`}>Leg</th>
               <th className={`${CELL} font-normal`}>Status</th>
-              <th className={`${CELL} text-right font-normal`}>Hits</th>
-              <th className={`${CELL} text-right font-normal`}>ms</th>
+              <th className={`${NUM} w-[18%] font-normal`}>Hits</th>
+              <th className={`${NUM} w-[18%] font-normal`}>ms</th>
             </tr>
           </thead>
           <tbody>
             {legs.map(([name, leg]) => (
-              <tr key={name}>
-                <td className={CELL}>{name}</td>
+              <tr key={name} className="border-t border-slate-100">
+                <td className={CELL}>
+                  <span className={`badge tier-${name}`}>{name}</span>
+                </td>
                 <td className={`${CELL} ${STATUS_STYLE[leg.status]}`}>{leg.status}</td>
-                <td className={`${CELL} text-right tabular-nums`}>{leg.hits}</td>
-                <td className={`${CELL} text-right tabular-nums`}>{leg.ms}</td>
+                <td className={NUM}>{leg.hits}</td>
+                <td className={NUM}>{leg.ms}</td>
               </tr>
             ))}
-            <tr>
-              <td className={CELL}>planner</td>
+            <tr className="border-t border-slate-100">
+              <td className={`${CELL} text-slate-500`}>planner</td>
               <td className={`${CELL} ${STATUS_STYLE[retrievers.planner]}`}>{retrievers.planner}</td>
-              <td className={CELL} />
-              <td className={`${CELL} text-right tabular-nums`}>{timings.plan_ms}</td>
+              <td className={NUM} />
+              <td className={NUM}>{timings.plan_ms}</td>
             </tr>
           </tbody>
         </table>

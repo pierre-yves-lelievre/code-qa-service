@@ -1,1 +1,68 @@
 @import "tailwindcss";
+
+/* One accent (indigo); every other colour on the page is a neutral, a tier, or an error. */
+@theme {
+  --color-accent: oklch(51.1% 0.262 276.966);
+  --color-accent-strong: oklch(45.7% 0.24 277.023);
+  --color-accent-soft: oklch(96.2% 0.018 272.314);
+}
+
+@layer base {
+  button:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+
+  input[type="search"]::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}
+
+/* Plain classes, always emitted, shared by the five components. */
+@layer components {
+  .panel {
+    @apply rounded-xl bg-white shadow-sm ring-1 ring-slate-900/5;
+  }
+
+  .caption {
+    @apply text-xs font-medium tracking-wide text-slate-500 uppercase;
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-medium whitespace-nowrap ring-1;
+  }
+
+  /* One colour per retrieval tier, wherever a tier is shown: source cards and the trace. */
+  .tier-symbol {
+    @apply bg-emerald-50 text-emerald-800 ring-emerald-200;
+  }
+
+  .tier-fts {
+    @apply bg-amber-50 text-amber-800 ring-amber-200;
+  }
+
+  .tier-vector {
+    @apply bg-sky-50 text-sky-800 ring-sky-200;
+  }
+
+  .error-note {
+    @apply rounded-md border-l-2 border-red-500 bg-red-50 px-3 py-2 text-sm text-red-800;
+  }
+
+  .link {
+    @apply text-accent underline-offset-2 transition-colors hover:text-accent-strong hover:underline;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-accent-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg bg-white px-3.5 py-2 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-300 transition-colors hover:bg-slate-50 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .input {
+    @apply w-full rounded-lg bg-white px-3 py-2 text-sm text-slate-900 shadow-sm ring-1 ring-slate-300 outline-none placeholder:text-slate-400 focus:ring-2 focus:ring-accent;
+  }
+}

@@ -3,8 +3,29 @@ import { api, errorText, type IndexAccepted, type RepoHit, type RepoSearchRespon
 
 const DEBOUNCE_MS = 300;
 
-const BUTTON =
-  "rounded bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-700 disabled:opacity-50";
+// Chips that fill the search box; they never start an index.
+const EXAMPLES = ["full-stack-fastapi-template", "markupsafe"];
+
+const SEARCH = (
+  <svg
+    viewBox="0 0 24 24"
+    className="size-5"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    aria-hidden="true"
+  >
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5" />
+  </svg>
+);
+
+const STAR = (
+  <svg viewBox="0 0 24 24" className="size-3.5 text-slate-400" fill="currentColor" aria-hidden="true">
+    <path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z" />
+  </svg>
+);
 
 /** "812 KB" or "27.3 MB" from GitHub's size in kilobytes. */
 function formatSize(kb: number): string {
@@ -69,9 +90,20 @@ export default function RepoSearch({ onStarted }: { onStarted: (job: IndexAccept
   }
 
   return (
-    <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
-      <div>
-        <label htmlFor="search" className="text-sm font-medium">
+    <div className="mx-auto max-w-2xl py-6 lg:py-14">
+      <div className="text-center">
+        <h1 className="text-3xl font-semibold tracking-tight text-balance text-slate-900 sm:text-4xl">
+          Ask anything about a codebase
+        </h1>
+        <p className="mx-auto mt-3 max-w-xl text-base text-pretty text-slate-600">
+          Search a public GitHub repository and index it, then ask questions. Every answer cites the
+          files and lines it comes from.
+        </p>
+      </div>
+
+      <div className="panel mt-10 flex items-center gap-2 px-4 focus-within:ring-2 focus-within:ring-accent">
+        <span className="text-slate-400">{SEARCH}</span>
+        <label htmlFor="search" className="sr-only">
           Search GitHub
         </label>
         <input
@@ -80,36 +112,60 @@ export default function RepoSearch({ onStarted }: { onStarted: (job: IndexAccept
           value={query}
           maxLength={256}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="full-stack-fastapi-template"
-          className="mt-1 w-full rounded border border-slate-300 px-3 py-2"
+          placeholder="Search GitHub repositories"
+          className="w-full bg-transparent py-3.5 text-base text-slate-900 outline-none placeholder:text-slate-400"
           autoFocus
         />
-        {searching && <p className="mt-2 text-sm text-slate-500">Searching…</p>}
-        {searchError && <p className="mt-2 text-sm text-red-700">{searchError}</p>}
+        {searching && <span className="text-xs whitespace-nowrap text-slate-400">Searching…</span>}
       </div>
+      <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-500">
+        <span>Try</span>
+        {EXAMPLES.map((example) => (
+          <button
+            key={example}
+            onClick={() => setQuery(example)}
+            className="rounded-full bg-white px-3 py-1 font-mono text-slate-700 ring-1 ring-slate-200 transition-colors hover:text-accent hover:ring-indigo-300 focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            {example}
+          </button>
+        ))}
+      </div>
+      {searchError && <p className="error-note mt-4">{searchError}</p>}
 
       {hits.length > 0 && (
-        <ul className="divide-y divide-slate-100">
+        <ul className="panel mt-6 divide-y divide-slate-100 overflow-hidden">
           {hits.map((hit) => (
-            <li key={hit.full_name} className="flex items-start justify-between gap-4 py-3">
+            <li
+              key={hit.full_name}
+              className="flex items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-slate-50"
+            >
               <div className="min-w-0">
                 <a
                   href={hit.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="font-medium text-blue-700 hover:underline"
+                  className="link text-sm font-semibold break-all"
                 >
                   {hit.full_name}
                 </a>
                 {hit.description && (
-                  <p className="truncate text-sm text-slate-600">{hit.description}</p>
+                  <p className="mt-1 line-clamp-2 text-sm text-slate-600">{hit.description}</p>
                 )}
-                <p className="text-xs text-slate-500">
-                  ★ {hit.stars.toLocaleString()} · {hit.language ?? "no language"} ·{" "}
-                  {formatSize(hit.size_kb)} · {hit.default_branch}
+                <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                  <span className="inline-flex items-center gap-1 tabular-nums">
+                    {STAR}
+                    {hit.stars.toLocaleString()}
+                  </span>
+                  <span>{hit.language ?? "No language"}</span>
+                  <span className="tabular-nums">{formatSize(hit.size_kb)}</span>
+                  <span className="font-mono">{hit.default_branch}</span>
                 </p>
               </div>
-              <button className={BUTTON} disabled={posting} onClick={() => startIndex(hit.url)}>
+              <button
+                className="btn-primary shrink-0"
+                disabled={posting}
+                onClick={() => startIndex(hit.url)}
+              >
                 Index
               </button>
             </li>
@@ -117,25 +173,25 @@ export default function RepoSearch({ onStarted }: { onStarted: (job: IndexAccept
         </ul>
       )}
 
-      <form onSubmit={submitUrl} className="border-t border-slate-100 pt-4">
-        <label htmlFor="url" className="text-sm font-medium">
-          or paste a GitHub URL
+      <form onSubmit={submitUrl} className="mt-10">
+        <label htmlFor="url" className="text-sm font-medium text-slate-700">
+          Or paste a GitHub URL
         </label>
-        <div className="mt-1 flex gap-2">
+        <div className="mt-2 flex gap-2">
           <input
             id="url"
             value={url}
             maxLength={512}
             onChange={(event) => setUrl(event.target.value)}
-            placeholder="https://github.com/owner/repo or …/tree/branch"
-            className="w-full rounded border border-slate-300 px-3 py-2"
+            placeholder="https://github.com/owner/repo"
+            className="input font-mono"
           />
-          <button type="submit" className={BUTTON} disabled={posting || !url.trim()}>
+          <button type="submit" className="btn-secondary shrink-0" disabled={posting || !url.trim()}>
             Index
           </button>
         </div>
       </form>
-      {indexError && <p className="text-sm text-red-700">{indexError}</p>}
-    </section>
+      {indexError && <p className="error-note mt-3">{indexError}</p>}
+    </div>
   );
 }

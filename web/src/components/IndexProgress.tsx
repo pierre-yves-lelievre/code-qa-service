@@ -11,16 +11,50 @@ import {
 
 const POLL_MS = 1500;
 
-const STAGES: Record<string, string> = {
-  cloning: "Cloning the repository",
-  walking: "Listing files",
-  parsing: "Parsing and chunking",
-  embedding: "Embedding chunks",
-  summarizing: "Writing the summary",
-  done: "Done",
-};
+// The job's stages, in order; `done` follows the last.
+const STAGES: [string, string][] = [
+  ["cloning", "Cloning the repository"],
+  ["walking", "Listing files"],
+  ["parsing", "Parsing and chunking"],
+  ["embedding", "Embedding chunks"],
+  ["summarizing", "Writing the summary"],
+];
 
-const PANEL = "rounded-lg border border-slate-200 bg-white p-4";
+const CHECK = (
+  <svg
+    viewBox="0 0 24 24"
+    className="size-3.5"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="3"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="m5 12 5 5 9-10" />
+  </svg>
+);
+
+// Same spinner as Chat's.
+const SPINNER = (
+  <svg
+    viewBox="0 0 24 24"
+    className="size-4 animate-spin"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.5"
+    aria-hidden="true"
+  >
+    <circle cx="12" cy="12" r="9" className="opacity-25" />
+    <path d="M21 12a9 9 0 0 0-9-9" strokeLinecap="round" />
+  </svg>
+);
+
+const GITHUB = (
+  <svg viewBox="0 0 16 16" className="size-4 shrink-0" fill="currentColor" aria-hidden="true">
+    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+  </svg>
+);
 
 /** A count with thousands separators, or a dash when the server did not send it. */
 function fmt(value: number | undefined): string {
@@ -44,7 +78,7 @@ export default function IndexProgress({ job, repo, alreadyIndexed, onSucceeded, 
   return null;
 }
 
-/** The running job: stage, counts and a bar, polled every POLL_MS. */
+/** The running job: a stepper with the current stage's counts and bar, polled every POLL_MS. */
 function Progress({
   job,
   onSucceeded,
@@ -81,35 +115,73 @@ function Progress({
 
   const status = state?.status ?? "pending";
   const progress = state?.progress ?? {};
+  const current =
+    status === "succeeded" || progress.stage === "done"
+      ? STAGES.length
+      : STAGES.findIndex(([stage]) => stage === progress.stage);
   const fraction = progressFraction(progress);
+  const counts = progressCounts(progress);
   return (
-    <section className={PANEL}>
-      <h2 className="font-medium">
-        Indexing {job.owner}/{job.name} <span className="text-slate-500">@ {job.branch}</span>
+    <section className="panel p-6">
+      <p className="caption">Indexing</p>
+      <h2 className="mt-1 text-lg font-semibold break-all text-slate-900">
+        {job.owner}/{job.name}{" "}
+        <span className="font-mono text-sm font-normal text-slate-500">@ {job.branch}</span>
       </h2>
       {status === "failed" ? (
-        <p className="mt-2 text-sm text-red-700">{state?.error ?? "The index job failed."}</p>
+        <p className="error-note mt-5">{state?.error ?? "The index job failed."}</p>
       ) : (
         <>
-          <p className="mt-2 text-sm">
-            {status === "pending"
-              ? "Waiting to start…"
-              : (STAGES[progress.stage ?? ""] ?? progress.stage)}
-          </p>
-          <p className="text-sm text-slate-500">{progressCounts(progress)}</p>
-          {fraction !== null && (
-            <div className="mt-2 h-2 rounded bg-slate-100">
-              <div
-                className="h-2 rounded bg-slate-900 transition-all"
-                style={{ width: `${Math.round(fraction * 100)}%` }}
-              />
-            </div>
+          {status === "pending" && <p className="mt-2 text-sm text-slate-500">Waiting to start…</p>}
+          {current === -1 && progress.stage && (
+            <p className="mt-2 text-sm text-slate-500">{progress.stage}</p>
           )}
+          <ol className="mt-6 space-y-4">
+            {STAGES.map(([stage, label], index) => {
+              const done = index < current;
+              const active = index === current;
+              return (
+                <li key={stage} className="flex gap-3">
+                  <span
+                    className={`flex size-6 shrink-0 items-center justify-center rounded-full ${
+                      done
+                        ? "bg-accent-soft text-accent"
+                        : active
+                          ? "text-accent ring-1 ring-indigo-200"
+                          : "ring-1 ring-slate-200"
+                    }`}
+                  >
+                    {done ? CHECK : active ? SPINNER : <span className="size-1.5 rounded-full bg-slate-300" />}
+                  </span>
+                  <div className="min-w-0 flex-1 pt-0.5">
+                    <p
+                      className={`text-sm ${
+                        active ? "font-medium text-slate-900" : done ? "text-slate-600" : "text-slate-400"
+                      }`}
+                    >
+                      {label}
+                    </p>
+                    {active && counts && (
+                      <p className="mt-0.5 text-xs text-slate-500 tabular-nums">{counts}</p>
+                    )}
+                    {active && fraction !== null && (
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full bg-accent transition-all duration-500"
+                          style={{ width: `${Math.round(fraction * 100)}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
         </>
       )}
-      {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
+      {error && <p className="error-note mt-5">{error}</p>}
       {(status === "failed" || error) && (
-        <button onClick={onBack} className="mt-3 text-sm text-blue-700 hover:underline">
+        <button onClick={onBack} className="btn-secondary mt-5">
           Back to search
         </button>
       )}
@@ -144,7 +216,7 @@ function progressCounts(progress: JobProgress): string {
   }
 }
 
-/** The active snapshot: commit, totals, per-language breakdown, skipped and unparsed files. */
+/** The sidebar: repo, commit, summary, totals, per-language breakdown, skipped and unparsed files. */
 function Summary({
   repo,
   snapshot,
@@ -164,49 +236,84 @@ function Summary({
     ["Windowed, no parser", stats.by_mode?.windows ?? 0],
     ["Parsed with errors", stats.files_with_parse_errors],
   ];
+  const indexed = snapshot.indexed_at
+    ? new Date(snapshot.indexed_at).toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      })
+    : null;
   return (
-    <section className={PANEL}>
-      <h2 className="font-medium">
-        Index of {repo.owner}/{repo.name}
-      </h2>
-      <p className="text-sm text-slate-500">
-        {snapshot.branch} @ <code>{snapshot.commit_sha?.slice(0, 12) ?? "–"}</code>
-        {snapshot.indexed_at && <> · {new Date(snapshot.indexed_at).toLocaleString()}</>}
-        {stats.seconds !== undefined && <> · {stats.seconds} s</>}
-      </p>
-      {alreadyIndexed && (
-        <p className="mt-2 text-sm text-slate-600">
-          Already indexed at this commit; nothing was re-embedded.
+    <section className="panel space-y-6 p-5">
+      <div>
+        <a
+          href={repo.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex max-w-full items-center gap-2 text-base font-semibold text-slate-900 transition-colors hover:text-accent"
+        >
+          {GITHUB}
+          <span className="truncate">
+            {repo.owner}/{repo.name}
+          </span>
+        </a>
+        <p className="mt-2">
+          <span className="badge bg-slate-50 font-mono text-slate-700 ring-slate-200">
+            {snapshot.branch} @ {snapshot.commit_sha?.slice(0, 12) ?? "–"}
+          </span>
         </p>
+        {indexed && (
+          <p className="mt-1.5 text-xs text-slate-500 tabular-nums">
+            Indexed {indexed}
+            {stats.seconds !== undefined && <> in {Math.round(stats.seconds)} s</>}
+          </p>
+        )}
+        {alreadyIndexed && (
+          <p className="mt-2 text-xs text-slate-500">
+            Already indexed at this commit; nothing was re-embedded.
+          </p>
+        )}
+      </div>
+
+      {repo.summary && (
+        <div>
+          <h3 className="caption">About</h3>
+          <p className="mt-2 text-sm leading-relaxed whitespace-pre-line text-slate-700">
+            {repo.summary}
+          </p>
+        </div>
       )}
 
-      <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-2">
         {totals.map(([label, value]) => (
-          <div key={label} className="rounded bg-slate-50 p-2">
+          <div key={label} className="flex flex-col-reverse rounded-lg bg-slate-50 px-3 py-2.5 ring-1 ring-slate-100">
             <dt className="text-xs text-slate-500">{label}</dt>
-            <dd className="font-medium">{fmt(value)}</dd>
+            <dd className="text-lg font-semibold text-slate-900 tabular-nums">{fmt(value)}</dd>
           </div>
         ))}
       </dl>
 
       {languages.length > 0 && (
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-left text-xs text-slate-500">
+        <div>
+          <h3 className="caption">Languages</h3>
+          <table className="mt-2 w-full table-fixed text-sm">
+            <thead className="text-left text-xs text-slate-400">
               <tr>
                 <th className="py-1 font-normal">Language</th>
-                <th className="py-1 text-right font-normal">Files</th>
-                <th className="py-1 text-right font-normal">Symbols</th>
-                <th className="py-1 text-right font-normal">Chunks</th>
+                <th className="w-[20%] py-1 text-right font-normal">Files</th>
+                <th className="w-[22%] py-1 text-right font-normal">Symbols</th>
+                <th className="w-[20%] py-1 text-right font-normal">Chunks</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="tabular-nums">
               {languages.map(([language, row]) => (
                 <tr key={language} className="border-t border-slate-100">
-                  <td className="py-1">{language}</td>
-                  <td className="py-1 text-right">{fmt(row.files)}</td>
-                  <td className="py-1 text-right">{fmt(row.symbols)}</td>
-                  <td className="py-1 text-right">{fmt(row.chunks)}</td>
+                  <td className="truncate py-1.5 text-slate-700" title={language}>
+                    {language}
+                  </td>
+                  <td className="py-1.5 text-right">{fmt(row.files)}</td>
+                  <td className="py-1.5 text-right">{fmt(row.symbols)}</td>
+                  <td className="py-1.5 text-right">{fmt(row.chunks)}</td>
                 </tr>
               ))}
             </tbody>
@@ -214,20 +321,30 @@ function Summary({
         </div>
       )}
 
-      <p className="mt-3 text-sm text-slate-600">
-        Skipped:{" "}
-        {skipped.length > 0
-          ? skipped.map(([reason, count]) => `${reason} ${count.toLocaleString()}`).join(", ")
-          : "none"}
-      </p>
-      {embedding && (
-        <p className="text-sm text-slate-600">
-          Embedding ({embedding.model}): {fmt(embedding.embedded)} new, {fmt(embedding.reused)}{" "}
-          reused, {fmt(embedding.tokens)} tokens, ${embedding.cost_usd.toFixed(4)}
-        </p>
-      )}
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 border-t border-slate-100 pt-4 text-xs">
+        <dt className="text-slate-500">Skipped</dt>
+        <dd className="text-slate-700 tabular-nums">
+          {skipped.length > 0
+            ? skipped.map(([reason, count]) => `${reason} ${count.toLocaleString()}`).join(", ")
+            : "none"}
+        </dd>
+        {embedding && (
+          <>
+            <dt className="text-slate-500">Embedded</dt>
+            <dd className="text-slate-700 tabular-nums">
+              {fmt(embedding.embedded)} new · {fmt(embedding.reused)} reused
+            </dd>
+            <dt className="text-slate-500">Tokens</dt>
+            <dd className="text-slate-700 tabular-nums">
+              {fmt(embedding.tokens)} · ${embedding.cost_usd.toFixed(4)}
+            </dd>
+            <dt className="text-slate-500">Model</dt>
+            <dd className="font-mono text-slate-700">{embedding.model}</dd>
+          </>
+        )}
+      </dl>
       {stats.summary?.status === "failed" && (
-        <p className="text-sm text-slate-600">
+        <p className="text-xs text-slate-500">
           The summary call failed, so there is no summary or suggested questions.
         </p>
       )}
