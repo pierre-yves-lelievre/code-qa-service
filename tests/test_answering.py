@@ -339,6 +339,12 @@ def test_a_module_source_links_to_the_whole_file_and_any_other_to_its_lines():
     assert github_url(REPO_URL, sha, "shop/cart.py", 1, 40, whole_file=True) == blob
 
 
+def test_a_module_search_result_is_named_by_its_bare_path_and_any_other_by_its_lines():
+    module = replace(_hit(1, qualname="shop.cart", line=1), kind="module")
+    assert to_briefed([module], SHA).source == "shop/cart.py"
+    assert to_briefed([_hit(2, line=20)], SHA).source == "shop/cart.py:20-29"
+
+
 def test_an_uncited_answer_is_noted_unless_it_is_not_found():
     assert check(_completion(), BRIEFED, REPO_URL, True).notes == [NO_CITATIONS_NOTE]
     not_found = check(_completion(text=f"{NOT_FOUND}."), BRIEFED, REPO_URL, True)
