@@ -107,8 +107,8 @@ export default function App() {
   );
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-20 border-b border-slate-800 bg-slate-900">
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
+      <header className="sticky top-0 z-20 mx-auto max-w-7xl rounded-b-xl bg-slate-900 px-4 shadow-md shadow-slate-900/10 sm:px-6">
+        <div className="flex h-16 items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
             {MARK}
             <div className="min-w-0">
