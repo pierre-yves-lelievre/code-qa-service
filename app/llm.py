@@ -77,7 +77,11 @@ class ClaudeLLM:
         max_tokens: int,
         timeout: float,
     ) -> Structured:
-        """One call constrained to a JSON schema; returns the parsed object (no sampling knobs)."""
+        """One call constrained to a JSON schema; returns the parsed object (no sampling knobs).
+
+        Reasoning is off: the model thinks by default, and on the planner that was ~290 hidden
+        output tokens and 4-6 s for ~40 tokens of JSON, enough to hit the timeout.
+        """
         message, usage = self._create(
             "structured",
             0,
@@ -85,6 +89,7 @@ class ClaudeLLM:
             system=system,
             messages=messages,
             output_config={"format": {"type": "json_schema", "schema": schema}},
+            thinking={"type": "disabled"},
             timeout=timeout,
         )
         text = "".join(block.text for block in message.content if block.type == "text")

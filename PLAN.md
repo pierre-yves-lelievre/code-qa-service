@@ -329,7 +329,7 @@ nothing when nothing changed.
 `tests/test_store.py`.
 
 **`planning.py`**: `plan(question, history, llm) -> Plan(query, identifiers, intent)` via one
-structured-output call to the same Sonnet 5 model (`max_tokens=200`, timeout 6 s; no sampling
+structured-output call to the same Sonnet 5 model (`max_tokens=500`, timeout 6 s, `thinking` disabled; no sampling
 setting, since anthropic 1.4.0's `messages.create()` has no `temperature`, `top_p` or `top_k`).
 Prompt: "Given the conversation, write the question as a standalone search query about the
 codebase; list any code identifiers mentioned; classify the intent as lookup, explain, or

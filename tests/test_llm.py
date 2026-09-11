@@ -54,7 +54,7 @@ def _call(llm: ClaudeLLM) -> Structured:
     return llm.structured("Plan the search.", MESSAGES, SCHEMA, max_tokens=200, timeout=3.0)
 
 
-def test_structured_call_sends_the_schema_without_sampling_settings_and_parses_the_json():
+def test_structured_call_sends_the_schema_with_reasoning_off_and_parses_the_json():
     llm, seen = _claude(_message('{"a": 1}'))
     assert _call(llm) == Structured({"a": 1}, Usage(input=50, output=20, cache_read=3))
     (request,) = seen
@@ -66,6 +66,7 @@ def test_structured_call_sends_the_schema_without_sampling_settings_and_parses_t
         "system": "Plan the search.",
         "messages": MESSAGES,
         "output_config": {"format": {"type": "json_schema", "schema": SCHEMA}},
+        "thinking": {"type": "disabled"},  # JSON extraction: reasoning only costs time
     }
 
 

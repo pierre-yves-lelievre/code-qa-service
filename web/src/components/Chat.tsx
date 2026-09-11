@@ -42,11 +42,18 @@ const MARKDOWN_STYLE =
 // When the answer ends in a paragraph, that paragraph flows inline so the chips close it.
 const CHIPS_INLINE = "[&>p:nth-last-child(2)]:inline";
 
-/** Escape `__` outside code fences and spans, so a dunder like __html__ is not rendered bold. */
-function escapeDunders(markdown: string): string {
+/**
+ * Escape prose outside code fences and spans: `__` so a dunder like __html__ is not bold, `<` so
+ * HTML-looking text such as <em> shows instead of being skipped, `&` so &amp; stays literal.
+ */
+function escapeProse(markdown: string): string {
   return markdown
     .split(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/)
-    .map((part, i) => (i % 2 === 1 ? part : part.replaceAll("__", "\\_\\_")))
+    .map((part, i) =>
+      i % 2 === 1
+        ? part
+        : part.replaceAll("__", "\\_\\_").replaceAll("<", "\\<").replaceAll("&", "\\&"),
+    )
     .join("");
 }
 
@@ -201,7 +208,7 @@ function Answer({
       )}
       <div className={`${MARKDOWN_STYLE} ${cited ? CHIPS_INLINE : ""}`}>
         <Markdown skipHtml allowedElements={ALLOWED_ELEMENTS} unwrapDisallowed>
-          {escapeDunders(response.answer)}
+          {escapeProse(response.answer)}
         </Markdown>
         {cited && (
           <span className="ml-1.5 inline-flex flex-wrap gap-1 align-[1px]">
