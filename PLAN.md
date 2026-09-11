@@ -329,7 +329,7 @@ nothing when nothing changed.
 `tests/test_store.py`.
 
 **`planning.py`**: `plan(question, history, llm) -> Plan(query, identifiers, intent)` via one
-structured-output call to the same Sonnet 5 model (`max_tokens=200`, timeout 3 s; no sampling
+structured-output call to the same Sonnet 5 model (`max_tokens=200`, timeout 6 s; no sampling
 setting, since anthropic 1.4.0's `messages.create()` has no `temperature`, `top_p` or `top_k`).
 Prompt: "Given the conversation, write the question as a standalone search query about the
 codebase; list any code identifiers mentioned; classify the intent as lookup, explain, or
@@ -370,7 +370,7 @@ that chunk first. Semantic quality is measured only by `make eval` with real key
 - *Planner*:
   - The prompt asks for keywords and identifiers without filler words.
   - The history is the last 4 turns as user and assistant messages, with the question last.
-  - `planner_timeout_s = 3`.
+  - `planner_timeout_s = 6` (real calls measured 2.0–2.9 s; 3 s timed out in Phase 10).
   - The reply is validated by hand, and any failure falls back. A validation failure keeps the
     usage it spent.
 - *Membership*:
