@@ -264,6 +264,14 @@ def check(
     """Keep only citations of briefed sources, decide not-found, and say what was dropped."""
     sources, dropped = resolve(completion.citations, briefed, repo_url)
     not_found = is_not_found(completion.text, retrieved)
+    # Once per answer attempt, so a retry leaves both counts behind; counts only, never content.
+    log.info(
+        "citations_checked",
+        returned=len(completion.citations),
+        dropped=dropped,
+        sources=len(sources),
+        briefed=len(briefed),
+    )
     notes: list[str] = []
     if dropped:
         were = "citation was" if dropped == 1 else "citations were"

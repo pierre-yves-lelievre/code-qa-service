@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 
 from app.answering import (
     CACHE,
@@ -281,6 +282,14 @@ def test_citations_outside_the_briefing_or_with_another_source_are_dropped():
     assert checked.notes == ["2 citations were dropped: not a source that was provided."]
     one = check(_completion(_cite(5, "x")), BRIEFED, REPO_URL, retrieved=True)
     assert one.notes[0] == "1 citation was dropped: not a source that was provided."
+
+
+def test_the_citation_check_logs_how_many_came_back_and_how_many_were_dropped():
+    citations = [_cite(7, PARTS.source), _cite(0, PARTS.source), _cite(1, PARTS.source)]
+    with capture_logs() as logs:
+        check(_completion(*citations), BRIEFED, REPO_URL, retrieved=True)
+    (entry,) = [line for line in logs if line["event"] == "citations_checked"]
+    assert (entry["returned"], entry["dropped"], entry["sources"], entry["briefed"]) == (3, 2, 1, 2)
 
 
 def test_citations_of_one_source_merge_and_narrow_its_lines_to_the_cited_blocks():
