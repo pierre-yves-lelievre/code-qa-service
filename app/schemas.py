@@ -64,6 +64,25 @@ class RepoSearchResponse(BaseModel):
     items: list[RepoHitResponse]
 
 
+class IndexedRepoResponse(BaseModel):
+    """One repository with an active snapshot, as the list route returns it."""
+
+    repo_id: int = Field(..., json_schema_extra={"example": 1})
+    owner: str = Field(..., json_schema_extra={"example": "pallets"})
+    name: str = Field(..., json_schema_extra={"example": "markupsafe"})
+    url: str = Field(..., json_schema_extra={"example": "https://github.com/pallets/markupsafe"})
+    commit_sha: str | None = Field(
+        None, json_schema_extra={"example": "b2e4d9c7687be25695fffbe93a37622302b24fb1"}
+    )
+    indexed_at: datetime | None = None
+
+
+class IndexedReposResponse(BaseModel):
+    """Every repository with an active snapshot, in owner and name order."""
+
+    items: list[IndexedRepoResponse]
+
+
 class SnapshotInfo(BaseModel):
     """A repository's active snapshot: commit, branch, when it was indexed, and its stats."""
 

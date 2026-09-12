@@ -34,13 +34,19 @@ http = httpx.Client(base_url=settings.service_url, timeout=TIMEOUT)
 
 
 @mcp.tool
-def ask(repo: int, question: str, conversation_id: str | None = None) -> dict[str, Any]:
+def list_repos() -> list[dict[str, Any]]:
+    """The repositories that are indexed and ready to ask about, with their commit and date."""
+    return _call("GET", "/repos")["items"]
+
+
+@mcp.tool
+def ask(repo: int | str, question: str, conversation_id: str | None = None) -> dict[str, Any]:
     """Ask a question about an indexed repository; the answer cites the code it used.
 
-    `repo` is the indexed repository's id, the `?repo=` of the web UI or `repo_id` from a search.
+    `repo` is an id (the `?repo=` of the web UI) or an "owner/name" from `list_repos`.
     Pass the returned `conversation_id` back to ask a follow-up in the same conversation.
     """
-    payload: dict[str, Any] = {"repo_id": repo, "question": question}
+    payload: dict[str, Any] = {"repo_id": _resolve(repo), "question": question}
     if conversation_id:
         payload["conversation_id"] = conversation_id
     data = _call("POST", "/ask", json=payload)
@@ -56,9 +62,12 @@ def ask(repo: int, question: str, conversation_id: str | None = None) -> dict[st
 
 
 @mcp.tool
-def repo_info(repo: int) -> dict[str, Any]:
-    """What is indexed for a repository: its snapshot, summary and suggested questions."""
-    data = _call("GET", f"/repos/{repo}")
+def repo_info(repo: int | str) -> dict[str, Any]:
+    """What is indexed for a repository: its snapshot, summary and suggested questions.
+
+    `repo` is an id or an "owner/name", as for `ask`.
+    """
+    data = _call("GET", f"/repos/{_resolve(repo)}")
     return {
         "owner": data["owner"],
         "name": data["name"],
@@ -70,6 +79,20 @@ def repo_info(repo: int) -> dict[str, Any]:
 
 
 # ── Transport ─────────────────────────────────────────────────────────────────
+
+
+def _resolve(repo: int | str) -> int:
+    """A repository id from an id, an "owner/name", or its GitHub URL; unknown names raise."""
+    text = str(repo).strip()
+    if text.isdigit():
+        return int(text)
+    wanted = text.lower().removeprefix("https://github.com/").removesuffix(".git").strip("/")
+    for indexed in _call("GET", "/repos")["items"]:
+        if f"{indexed['owner']}/{indexed['name']}".lower() == wanted:
+            return int(indexed["repo_id"])
+    raise ToolError(
+        f'No indexed repository "{repo}"; call list_repos to see them. (repo_not_found)'
+    )
 
 
 def _call(method: str, path: str, **kwargs: Any) -> dict[str, Any]:

@@ -28,8 +28,8 @@ When they disagree, ask; do not guess.
 ```
 app/
 ├── main.py           # FastAPI app, lifespan (migrations, pool), request_id middleware, SPA mount
-├── api.py            # ALL routes: /health /repos/search /repos/{id} /index /index/{job_id} /ask
-│                     #   /queries/{id}/feedback
+├── api.py            # ALL routes: /health /repos /repos/search /repos/{id} /index
+│                     #   /index/{job_id} /ask /queries/{id}/feedback
 ├── config.py         # Settings via pydantic-settings; `settings` singleton
 ├── errors.py         # ServiceError hierarchy + the two FastAPI handlers
 ├── schemas.py        # Pydantic request/response models, with examples

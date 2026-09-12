@@ -40,6 +40,8 @@ from app.schemas import (
     FeedbackResponse,
     HealthResponse,
     IndexAccepted,
+    IndexedRepoResponse,
+    IndexedReposResponse,
     IndexRequest,
     JobResponse,
     KeysHealth,
@@ -159,6 +161,33 @@ def health(request: Request) -> JSONResponse:
         ),
     )
     return JSONResponse(status_code=200 if healthy else 503, content=body.model_dump())
+
+
+@router.get(
+    "/repos",
+    response_model=IndexedReposResponse,
+    summary="Indexed repositories",
+    description=(
+        "Every repository with an active snapshot: its id, owner, name, URL, and the snapshot's "
+        "commit sha and indexing time. A repository whose first index never succeeded is not "
+        "listed, since there is nothing to answer from."
+    ),
+)
+def list_repos(store: Annotated[ChunkStore, Depends(get_store)]) -> IndexedReposResponse:
+    """Every repository that can be asked about."""
+    return IndexedReposResponse(
+        items=[
+            IndexedRepoResponse(
+                repo_id=repo.id,
+                owner=repo.owner,
+                name=repo.name,
+                url=repo.url,
+                commit_sha=repo.commit_sha,
+                indexed_at=repo.indexed_at,
+            )
+            for repo in store.list_repos()
+        ]
+    )
 
 
 @router.get(

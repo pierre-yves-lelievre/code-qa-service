@@ -491,6 +491,8 @@ suggested questions, stored on `repos`. Best-effort; failure leaves it null.
   - It runs after embedding and before activation. A failure writes nothing and shows in the
     snapshot stats.
   - `GET /repos/{id}` returns the summary, the suggested questions and the active snapshot.
+  - `GET /repos` lists every repository with an active snapshot (id, owner, name, url, commit
+    sha, indexing time), which is how the MCP tools resolve an `"owner/name"`.
 - *Errors*: an unknown repo is 404 `repo_not_found`; a repo with no active snapshot is 409
   `repo_not_indexed`.
 
@@ -617,7 +619,7 @@ from `{detail, code}`.
   - The only anchors are server-built: each source's `github_url` and the repo's `url`.
 - *State*:
   - `?repo=<id>` is set when an index succeeds, and a reload restores the page from
-    `GET /repos/{id}`, so there is no list route.
+    `GET /repos/{id}`, so the page needs no list route; `GET /repos` exists for the MCP tools.
   - The job is polled every 1.5 s until it succeeds or fails.
   - `conversation_id` and every turn live in `Chat` state. The four-turn window is the server's
     replay concern only, and "New chat" drops both.

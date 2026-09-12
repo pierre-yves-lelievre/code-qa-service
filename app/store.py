@@ -91,6 +91,10 @@ _TURNS = (
     " WHERE repo_id = %s AND conversation_id = %s AND answer IS NOT NULL"
     " ORDER BY id DESC LIMIT %s) t ORDER BY id"
 )
+_INDEXED = (
+    "SELECT r.id, r.owner, r.name, r.url, s.commit_sha, s.indexed_at FROM repos r"
+    " JOIN snapshots s ON s.repo_id = r.id AND s.status = 'active' ORDER BY r.owner, r.name"
+)
 
 
 @dataclass(frozen=True)
@@ -128,6 +132,18 @@ class Snapshot:
     status: SnapshotStatus
     indexed_at: datetime | None
     stats: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class IndexedRepo:
+    """A repository with an active snapshot: what it takes to list and pick one."""
+
+    id: int
+    owner: str
+    name: str
+    url: str
+    commit_sha: str | None
+    indexed_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -192,6 +208,11 @@ class ChunkStore:
                 " WHERE repo_id = %s AND status = 'active'",
                 (repo_id,),
             ).fetchone()
+
+    def list_repos(self) -> list[IndexedRepo]:
+        """Every repository with an active snapshot, in owner and name order."""
+        with self._connect() as conn, conn.cursor(row_factory=class_row(IndexedRepo)) as cur:
+            return cur.execute(_INDEXED).fetchall()
 
     def create_snapshot(self, repo_id: int, branch: str, commit_sha: str) -> int:
         """Insert a `building` snapshot at a commit; return its id."""

@@ -313,6 +313,21 @@ def test_failed_reindex_leaves_the_previous_snapshot_active(
     assert chunks == [(_expected_chunks("py_app"),)]
 
 
+def test_repos_lists_only_repositories_with_an_active_snapshot(
+    client, committed, mock_github, fixture_repo
+):
+    repo_id, sha = _indexed_py_app(client, mock_github, fixture_repo)
+    bare = ChunkStore().upsert_repo("octo", "bare", "https://github.com/octo/bare")
+
+    items = client.get("/repos").json()["items"]
+
+    assert [item["repo_id"] for item in items] == [repo_id]  # the bare repo has no snapshot
+    (item,) = items
+    assert (item["owner"], item["name"], item["url"]) == ("octo", "py_app", REPO_URL)
+    assert (item["commit_sha"], bool(item["indexed_at"])) == (sha, True)
+    assert bare != repo_id
+
+
 def test_reindex_at_the_same_commit_short_circuits(client, committed, mock_github, fixture_repo):
     repo = fixture_repo("py_app")
     first = _index(client, mock_github, repo)
