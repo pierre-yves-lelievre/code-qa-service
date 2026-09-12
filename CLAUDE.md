@@ -19,6 +19,7 @@ When they disagree, ask; do not guess.
 | `make check` | lint + format `--check` + test — **run before every commit** |
 | `make eval` | golden set against the demo repo (needs real keys); `ARGS=--reindex` to force |
 | `make smoke` | index `pallets/markupsafe` and ask one question (real keys: about $0.07) |
+| `make mcp` | the MCP server over stdio; it calls the service (`make run` first) |
 | `make web` | build the SPA into `app/static/` |
 | `docker compose up --build` | full stack |
 
@@ -48,11 +49,13 @@ app/
 │                     #   leg runner and retrieve(), the only I/O there (per-leg isolation)
 ├── answering.py      # briefing (two-tier), cached history, Claude call, citations, validity check
 ├── summary.py        # one Claude call per index run: repo summary + suggested questions
-└── indexing.py       # _run_index(): clone -> parse -> chunk -> embed -> summary -> activate
+├── indexing.py       # _run_index(): clone -> parse -> chunk -> embed -> summary -> activate
+└── mcp_server.py     # FastMCP over stdio: ask() and repo_info() call the running service
 web/                  # Vite + React + Tailwind + TypeScript, built into app/static (never committed)
 ├── src/api.ts        #   fetch wrapper ({detail, code} -> ApiError) and types mirroring schemas.py
 └── src/components/   #   RepoSearch, IndexProgress, Chat, Sources, Trace; one file each
 evals/                # golden.json, run_evals.py, smoke.py
+docs/                  # mcp.md, evals/, screenshots/
 tests/                # conftest.py, test_parsing.py, test_chunking.py, test_retrieval.py,
                       # test_store.py, test_jobs.py, test_db.py, test_github.py,
                       # test_embeddings.py, test_llm.py, test_planning.py,

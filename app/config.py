@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     log_level: str = "INFO"
     data_dir: Path = Path("./data")
+    service_url: str = "http://localhost:8000"  # where the MCP server reaches this service
 
     # ── Database ──────────────────────────────────────────────────────────────
     database_url: str

@@ -1,4 +1,4 @@
-.PHONY: install db run test lint format audit check eval smoke web
+.PHONY: install db run test lint format audit check eval smoke mcp web
 
 install:
 	uv sync --all-groups
@@ -37,6 +37,10 @@ eval:
 # Spends money with PROVIDERS=real (about $0.07 on pallets/markupsafe); `ARGS=--repo URL` for another.
 smoke:
 	uv run python -m evals.smoke $(ARGS)
+
+# The MCP server over stdio; it calls the running service at settings.service_url.
+mcp:
+	uv run python -m app.mcp_server
 
 # Type-checks and builds the page into app/static, which the app serves at /.
 web:
