@@ -227,14 +227,18 @@ def brief(
         sources.extend(cited)
     if messages:
         messages[-1]["content"][-1]["cache_control"] = CACHE
+    # A source replayed from history is already citable: briefing it again would send the same
+    # search result twice in one request, and then the answer tends to cite neither copy.
+    replayed = {source.source for source in sources}
+    current = [source for source in full if source.source not in replayed]
     content: list[dict[str, Any]] = [{"type": "text", "text": question}]
     if floor:
         content.append({"type": "text", "text": FLOOR_NOTE})
-    content.extend(map(_search_result, full))
+    content.extend(map(_search_result, current))
     if index:
         content.append({"type": "text", "text": _index_lines(index)})
     messages.append({"role": "user", "content": content})
-    return Briefing(system, messages, (*sources, *full))
+    return Briefing(system, messages, (*sources, *current))
 
 
 def _nudged(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

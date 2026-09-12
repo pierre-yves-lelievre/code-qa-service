@@ -163,6 +163,17 @@ def test_history_carries_its_sources_and_breakpoint_two_sits_on_the_last_answer(
     assert briefing.sources[0].commit_sha == "b" * 40  # a cited source keeps its own commit
 
 
+def test_a_source_replayed_from_history_is_not_briefed_again_for_this_turn():
+    history = [StoredTurn("question 1", "answer 1", [_stored(FULL[0])])]
+    briefing = brief("and the tax?", CONTEXT, history, FULL, [], floor=False)
+    current = [
+        b["source"] for b in briefing.messages[-1]["content"] if b["type"] == "search_result"
+    ]
+    assert current == [FULL[1].source]  # FULL[0] came back from history: it is not sent twice
+    assert _search_results(briefing.messages) == [s.source for s in briefing.sources]
+    assert [s.source for s in briefing.sources] == [FULL[0].source, FULL[1].source]
+
+
 def test_the_history_prefix_is_identical_from_one_turn_to_the_next():
     history = [_turn(1), _turn(2)]
     first = brief("and the tax?", CONTEXT, history, FULL, INDEX, floor=False)
