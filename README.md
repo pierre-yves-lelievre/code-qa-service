@@ -297,36 +297,7 @@ Same philosophy as before: every happy path end to end and every error path that
 
 ## Architecture
 
-```
-POST /index                                       POST /ask
-     │                                                 │
-     ▼                                                 ▼
-┌──────────────┐   BackgroundTask   ┌──────────────┐ ┌──────────────┐
-│  FastAPI app  │ ─────────────────▶│  _run_index   │ │     ask()     │
-│  (api.py)     │                   │ (indexing.py) │ │ (answering.py)│
-└──────────────┘                   └──────┬───────┘ └──────┬───────┘
-                                          │                │
-              ┌───────────────────────────┤                ├──────────────────────┐
-              ▼                           ▼                ▼                      ▼
-     ┌────────────────┐        ┌────────────────┐  ┌──────────────┐     ┌────────────────┐
-     │  GitHubClient   │        │  parsing.py    │  │ planning.py  │     │    llm.py       │
-     │  (github.py)    │        │  chunking.py   │  │ retrieval.py │     │ ClaudeLLM /     │
-     │  search, clone  │        │  tree-sitter   │  │ 3 legs + RRF │     │ FakeLLM         │
-     └────────────────┘        └───────┬────────┘  └──────┬───────┘     └────────────────┘
-                                       │                  │
-                                       ▼                  ▼
-                              ┌────────────────┐  ┌────────────────┐
-                              │ embeddings.py  │  │   ChunkStore    │
-                              │ Voyage / Fake  │  │   (store.py)    │
-                              └───────┬────────┘  └───────┬────────┘
-                                      │                   │
-                                      ▼                   ▼
-                              ┌──────────────────────────────────────┐
-                              │  Postgres + pgvector                 │
-                              │  repos · snapshots · files · chunks  │
-                              │  embeddings · index_jobs · queries   │
-                              └──────────────────────────────────────┘
-```
+![Architecture](docs/architecture.svg)
 
 **Index job lifecycle.** `POST /index` validates the URL, pre-checks the repository through the GitHub API, creates a `Job` in the Postgres-backed `JobStore`, registers `_run_index` as a `BackgroundTask` and returns `202`. The job checks the API key with one tiny call, clones at depth 1, records the commit, and stops early if that commit is already the active snapshot. Otherwise it creates a `building` snapshot, walks the tree with an ignore list and size caps, parses each file into symbol rows with tree-sitter (Python, TypeScript, TSX, JavaScript), cuts chunks, and commits every fifty files so the progress endpoint has something true to say. Embedding sends only content hashes that have no vector for the current model. One structured Claude call writes a summary and four suggested questions. Activation retires the previous snapshot and activates the new one in a single transaction; a failed run leaves the old index live. Any exception is caught, written to `job.error`, and never propagates. A cooperative deadline bounds the whole job, and interrupted jobs are marked failed at the next startup.
 
