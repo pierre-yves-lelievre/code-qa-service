@@ -33,10 +33,10 @@ Set `PROVIDERS=real` in `.env` and add two keys:
 
 | Key | Where | What the demo costs |
 |---|---|---|
-| `VOYAGE_API_KEY` | [dash.voyageai.com](https://dash.voyageai.com) | Indexing the demo repo is ~350k tokens: about $0.04 at list price, inside the free allowance |
-| `ANTHROPIC_API_KEY` | [platform.claude.com](https://platform.claude.com) | About $0.05 per question, $0.02 per index for the summary |
+| `VOYAGE_API_KEY` | [dash.voyageai.com](https://dash.voyageai.com) | Indexing the demo repo is about 236k tokens: $0.03 at list price, inside the free allowance |
+| `ANTHROPIC_API_KEY` | [platform.claude.com](https://platform.claude.com) | About $0.03 per question (median over 50 real answers), under a cent per index for the summary |
 
-`make smoke` costs under $0.10. A full `make eval` including the index is about $0.25.
+`make smoke` costs under $0.10. A full `make eval` including the index is about $0.12.
 
 ### Local
 
@@ -248,7 +248,7 @@ curl -s -X POST localhost:8000/ask \
 }
 ```
 
-Pass the returned `conversation_id` on the next call to continue the thread; the last four turns are replayed to the model with the sources they cited. `not_found` is `true` when the relevance floor fired, when no sources were retrieved (no model call is made), or when the model said so. Errors: `404 repo_not_found`, `409 repo_not_indexed`, `422` on an empty or over-long question, `502 provider_error`.
+Pass the returned `conversation_id` on the next call to continue the thread; the last four turns are replayed to the model with the sources they cited. `not_found` is `true` when no sources were retrieved (no model call is made) or when the answer opens with "Not found in the indexed code." The relevance floor only adds a warning sentence to the prompt. Errors: `404 repo_not_found`, `409 repo_not_indexed`, `422` on an empty or over-long question, `502 provider_error`.
 
 ---
 
@@ -330,7 +330,7 @@ POST /index                                       POST /ask
 
 **Index job lifecycle.** `POST /index` validates the URL, pre-checks the repository through the GitHub API, creates a `Job` in the Postgres-backed `JobStore`, registers `_run_index` as a `BackgroundTask` and returns `202`. The job checks the API key with one tiny call, clones at depth 1, records the commit, and stops early if that commit is already the active snapshot. Otherwise it creates a `building` snapshot, walks the tree with an ignore list and size caps, parses each file into symbol rows with tree-sitter (Python, TypeScript, TSX, JavaScript), cuts chunks, and commits every fifty files so the progress endpoint has something true to say. Embedding sends only content hashes that have no vector for the current model. One structured Claude call writes a summary and four suggested questions. Activation retires the previous snapshot and activates the new one in a single transaction; a failed run leaves the old index live. Any exception is caught, written to `job.error`, and never propagates. A cooperative deadline bounds the whole job, and interrupted jobs are marked failed at the next startup.
 
-**Answer lifecycle.** `ask()` loads the repository, its active snapshot and the last four turns of the conversation. The planner turns the question into a standalone search query, a list of identifiers and an intent. Identifiers are checked against the index by membership, not by pattern. Three legs run, each in its own try block: the symbol ladder (exact qualname, exact name, qualname suffix), weighted full-text search (AND first, OR as a fallback), and vector similarity over HNSW. Reciprocal rank fusion merges them; parts of long symbols collapse back into one; the top twelve become search-result blocks and the next thirty a compact index. If nothing precise matched and the best cosine score is below the floor, the model is told the sources look unrelated. Claude answers with native citations, the code drops any citation that does not point at something in the briefing, builds the GitHub links itself, and writes the whole exchange to `queries`.
+**Answer lifecycle.** `ask()` loads the repository, its active snapshot and the last four turns of the conversation. The planner turns the question into a standalone search query, a list of identifiers and an intent. Identifiers are checked against the index by membership, not by pattern. Three legs run, each in its own try block: the symbol ladder (exact qualname, exact name, qualname suffix), weighted full-text search (AND first, OR as a fallback), and vector similarity over HNSW. Reciprocal rank fusion merges them; parts of long symbols collapse back into one; the top twelve become search-result blocks and the next thirty (sixty for list-style questions) a compact index. If nothing precise matched and the best cosine score is below the floor, the model is told the sources look unrelated. Claude answers with native citations, the code drops any citation that does not point at something in the briefing, builds the GitHub links itself, and writes the whole exchange to `queries`.
 
 ---
 
@@ -380,7 +380,7 @@ The table above says what was chosen. These are the decisions that needed an arg
 - **A trace on every answer.** Which legs fired, per-stage timings, tokens in and out, cache reads, the snapshot answered from. The UI shows it; the `queries` table keeps it.
 - **A citation validity check.** Every citation must point at a source that was in the briefing; anything else is dropped and noted in the response. An answer that cites nothing is asked once more to cite; if it still doesn't, the top retrieved sources are shown as "retrieved, not cited" rather than hidden. One cause was found and removed: when a source retrieved for the current turn was also being replayed from conversation history, the model stopped citing altogether; the briefing now sends each source once and keeps the history copy citable. Citations returned and dropped are logged per attempt, so a recurrence is visible.
 - **A relevance floor calibrated from data.** The eval reports each case's best cosine score: hits scored 0.26 and above, the two misses 0.20 and below, the not-found case 0.02. The floor is 0.25. It only adds a warning sentence to the prompt; `not_found` comes from the model's own opening or from an empty retrieval, never from the floor alone.
-- **Timeouts measured, not guessed.** The planner call runs 2.0–2.9 s on real calls; a 3-second timeout tripped once at 3,049 ms and lost a follow-up's identifiers. It is 6 s now, with the measured range in the setting's comment.
+- **Timeouts measured, not guessed.** The planner call runs 2.0–2.9 s on real calls; a 3-second timeout tripped once at 3,049 ms and lost a follow-up's identifiers. It is 6 s now, with the measured range in the setting's comment. Reasoning is disabled for the planner and summary calls (2.2–3.0 s measured), and a dropped connection is retried once inside the same budget.
 - **Pydantic at the boundaries only.** Requests, responses and settings; frozen dataclasses inside the pipeline.
 - **Migrations are append-only SQL**, applied at startup under an advisory lock.
 - **Pre-commit** runs `ruff`, `ruff format` and `gitleaks`. **CI** runs lint, format check, `pip-audit`, the tests against a pgvector service container, the web build and the Docker build, on every push. **Dependabot** watches uv, npm, Actions and Docker.
@@ -422,7 +422,7 @@ also where per-job isolation closes the one limitation that cannot be closed in-
 worker is killed by the platform on its timeout. Add an API key header and a spend alert. A day's work.
 
 **A product (thousands of users, thousands of repositories).** Vector search is a filtered HNSW
-scan on one `embeddings` table, and I could see its cost in development: retrieval on the same
+scan on one `embeddings` table. Observed during development, not benchmarked: retrieval on the same
 repository went from about 150 ms to nearly 600 ms as six unrelated repositories joined the table.
 Partition `chunks` and `embeddings` by repository, or use partial indexes, and pool connections
 through PgBouncer. Parsing becomes incremental: `git diff` between the last snapshot's commit and
@@ -440,10 +440,10 @@ egress allow-list; keys from a secrets manager; TLS at the edge; retention on th
 ### Capacity and cost, as measured
 
 - pgvector with HNSW is comfortable to millions of vectors with tuning; a 250-file repository is
-  about a thousand chunks and 350k embedding tokens, indexed in 24 s.
-- A question costs about $0.05 at the current briefing size (median 7,804 input
-  tokens); `ANSWER_FULL_HITS` and `ANSWER_INDEX_LINES` are the levers, and prompt caching brings
-  repeated turns down by 26%.
+  about a thousand chunks and about 236k embedding tokens, indexed in 24 s.
+- A question costs about $0.03 at the current briefing size (median over 50 real answers, 7,804
+  input tokens); `ANSWER_FULL_HITS` and `ANSWER_INDEX_LINES` are the levers, and prompt caching
+  brings repeated turns down by 26%.
 - Re-indexing an unchanged commit costs nothing; a changed one costs only the changed chunks.
 
 ### Observability in production
@@ -491,7 +491,7 @@ Stated limitation: per-file parse time is bounded by the size cap and the job ti
 
 ## Design and product
 
-1. **It shows its work.** Every answer carries how each source was found, what the model saw, how long each stage took and what it cost.
+1. **It shows its work.** Every answer carries how each source was found, what the model saw, how long each stage took, and the tokens and cache reads behind the cost.
 2. **It refuses honestly.** "Not found in this repository" is a state with its own badge, not a hedge inside a paragraph.
 3. **It cites to the commit.** Every source links to GitHub at the indexed commit and the cited lines, and "Ask about this" turns a citation into the next question.
 4. **It collects its own test cases.** A thumbs-down is stored against the query and surfaces as a candidate for the golden set.
@@ -637,7 +637,7 @@ Full report, including the reverted experiment and the floor calibration: [`docs
 - Languages without a query file (Go, Rust, PHP, …) are indexed as windows. Each is a grammar wheel, a twenty-line query, a fixture and a test.
 - Answers to broad questions run long; the prompt limits transcription of code, not length.
 - No streaming, no authentication, no rate limiting.
-- Answers cost about five cents each at the current briefing size; `ANSWER_FULL_HITS` and `ANSWER_INDEX_LINES` are settings for tuning that down.
+- Answers cost about three cents each at the current briefing size; `ANSWER_FULL_HITS` and `ANSWER_INDEX_LINES` are settings for tuning that down.
 
 With more time, in order: the LLM judge, streaming, per-repo partial indexes, incremental parsing, a reranker, and one more language to prove the recipe.
 
