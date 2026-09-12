@@ -70,18 +70,30 @@ def test_structured_call_sends_the_schema_with_reasoning_off_and_parses_the_json
     }
 
 
-def test_server_error_is_not_retried():
+def test_a_server_error_is_retried_once_and_a_client_error_is_not():
     llm, seen = _claude(httpx2.Response(500, json={"type": "error"}))
     with pytest.raises(ProviderError, match="HTTP 500"):
         _call(llm)
-    assert len(seen) == 1
+    assert len(seen) == 2  # one immediate retry, inside the same timeout budget
+
+    llm, seen = _claude(httpx2.Response(400, json={"type": "error"}))
+    with pytest.raises(ProviderError, match="HTTP 400"):
+        _call(llm)
+    assert len(seen) == 1  # our request was wrong: sending it again would not help
 
 
-def test_timeout_is_a_provider_error():
+def test_a_dropped_connection_is_retried_once_and_the_retry_stands():
+    llm, seen = _claude(httpx2.ConnectError("reset"), _message('{"a": 1}'))
+    assert _call(llm) == Structured({"a": 1}, Usage(input=50, output=20, cache_read=3))
+    assert len(seen) == 2
+    assert json.loads(seen[1].content)["thinking"] == {"type": "disabled"}  # the same request
+
+
+def test_timeout_is_a_provider_error_and_is_never_retried():
     llm, seen = _claude(httpx2.ReadTimeout("slow"))
     with pytest.raises(ProviderError, match="timed out"):
         _call(llm)
-    assert len(seen) == 1
+    assert len(seen) == 1  # the budget is spent, however the retry rule is set
 
 
 @pytest.mark.parametrize(

@@ -130,7 +130,9 @@ per call** and are used only at the very end. Rules:
   and embeddings are keyed by content hash. `run_evals.py` refuses to re-index the pinned repo
   unless `--reindex` is passed.
 - Spend guards in settings: `max_embed_tokens_per_job` (default 5M) aborts an index job with a
-  clear error; the LLM call has a fixed `max_tokens` and retries only once on a 5xx.
+  clear error; the LLM call has a fixed `max_tokens`. An answer call retries once on a 5xx; a
+  structured call (planner, summary) retries once on a 5xx or a dropped connection, within its
+  original timeout. A timeout or a 4xx is never retried.
 - Every index summary logs tokens embedded and estimated cost; every `/ask` response carries token
   counts. The README quotes these numbers.
 - Claude Code context is also a budget: plan mode per phase, `/compact` between phases, locate with

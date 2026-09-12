@@ -81,10 +81,14 @@ class ClaudeLLM:
 
         Reasoning is off: the model thinks by default, and on the planner that was ~290 hidden
         output tokens and 4-6 s for ~40 tokens of JSON, enough to hit the timeout.
+
+        A dropped connection or a 5xx is retried once inside the same timeout budget, since one
+        blip otherwise costs the planner its identifiers. A timeout or a 4xx is final.
         """
         message, usage = self._create(
             "structured",
-            0,
+            1,
+            retry_connection=True,
             max_tokens=max_tokens,
             system=system,
             messages=messages,
@@ -116,24 +120,40 @@ class ClaudeLLM:
         return _completion(message.content, usage, message.stop_reason == "max_tokens")
 
     def _create(
-        self, kind: str, retries: int, **request: Any
+        self, kind: str, retries: int, *, retry_connection: bool = False, **request: Any
     ) -> tuple[anthropic.types.Message, Usage]:
-        """Send one request, retrying a 5xx up to `retries` times; log shapes, never content."""
+        """Send one request, retrying a 5xx (and a dropped connection when asked) up to `retries`
+        times within the original timeout; log shapes, never content."""
         started = time.monotonic()
+        budget = float(request.get("timeout") or 0.0)
         attempt = 0
         while True:
             try:
                 message = self._client.messages.create(model=self.model, **request)
             except anthropic.APIStatusError as exc:
-                if exc.status_code >= 500 and attempt < retries:
+                left = _left(started, budget)
+                if exc.status_code >= 500 and attempt < retries and left:
                     attempt += 1
+                    request["timeout"] = left
                     log.warning("llm_call_retried", kind=kind, status=exc.status_code)
                     continue
                 log.warning("llm_call_failed", kind=kind, status=exc.status_code)
                 raise ProviderError(
                     f"Claude rejected the request (HTTP {exc.status_code})."
                 ) from None
-            except anthropic.APIError as exc:  # timeouts and connection errors
+            except anthropic.APITimeoutError:  # the budget is spent: never retried
+                log.warning("llm_call_failed", kind=kind, error_type="APITimeoutError")
+                raise ProviderError("Claude timed out or is unreachable.") from None
+            except anthropic.APIConnectionError as exc:
+                left = _left(started, budget)
+                if retry_connection and attempt < retries and left:
+                    attempt += 1
+                    request["timeout"] = left
+                    log.warning("llm_call_retried", kind=kind, error_type=type(exc).__name__)
+                    continue
+                log.warning("llm_call_failed", kind=kind, error_type=type(exc).__name__)
+                raise ProviderError("Claude timed out or is unreachable.") from None
+            except anthropic.APIError as exc:
                 log.warning("llm_call_failed", kind=kind, error_type=type(exc).__name__)
                 raise ProviderError("Claude timed out or is unreachable.") from None
             break
@@ -154,6 +174,11 @@ class ClaudeLLM:
     def close(self) -> None:
         """Close the SDK client."""
         self._client.close()
+
+
+def _left(started: float, budget: float) -> float:
+    """What is left of the timeout budget; 0.0 when it is spent, so no retry is attempted."""
+    return max(0.0, budget - (time.monotonic() - started))
 
 
 def _usage(usage: anthropic.types.Usage) -> Usage:
