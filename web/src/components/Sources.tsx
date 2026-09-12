@@ -41,8 +41,12 @@ function CodePanel({ source }: { source: Source }) {
     const element = scroller.current;
     if (element) setOverflows(element.scrollWidth > element.clientWidth + 1);
   }, [source.excerpt]);
-  // The excerpt drops each chunk's header line, so its first line is `start_line`.
-  const code = source.excerpt.split("\n");
+  // The excerpt opens with the chunk's signature row. Drop it when the code below repeats it
+  // (`def f(x) -> T` then `    def f(x) -> T:`), which also puts the line numbers back in step.
+  const [signature, ...rest] = source.excerpt.split("\n");
+  const bare = (line: string) => line.trim().replace(/[:{]$/, "");
+  const firstCode = rest.find((line) => line.trim() !== "");
+  const code = firstCode !== undefined && bare(firstCode) === bare(signature) ? rest : [signature, ...rest];
   return (
     <div
       className={`relative border-l-[3px] bg-slate-900 ${source.tier ? TIER_BORDER[source.tier] : "border-l-slate-600"}`}
