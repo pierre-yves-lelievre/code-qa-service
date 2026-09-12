@@ -320,6 +320,26 @@ def test_the_link_quotes_the_path_and_uses_the_sources_own_commit():
     assert old.github_url == f"{REPO_URL}/blob/{'b' * 40}/docs/my%20file%231.md#L1-L10"
 
 
+def test_a_decorated_symbol_keeps_its_signature_row_and_links_from_its_start_line():
+    # As chunking cuts it: the header line, the signature lead, then the body from the decorator.
+    text = (
+        "shop/models.py :: shop.models.Product.label (method)\n"
+        "def label(self) -> str\n"
+        "    @property\n"
+        "    def label(self) -> str:\n"
+        "        return self._label"
+    )
+    hit = _hit(1, path="shop/models.py", qualname="shop.models.Product.label", line=13, text=text)
+    briefed = (to_briefed([hit], SHA),)
+    (source,), _ = resolve([_cite(0, briefed[0].source)], briefed, REPO_URL)
+
+    signature, *code = source.excerpt.split("\n")
+    assert signature == "def label(self) -> str"  # metadata: the client leaves it unnumbered
+    assert code[0] == "    @property"  # the code opens on the decorator, repeating nothing
+    assert (source.start_line, source.end_line) == (13, 22)  # the decorator line starts the chunk
+    assert source.github_url == f"{REPO_URL}/blob/{SHA}/shop/models.py#L13-L22"
+
+
 def test_an_empty_block_range_is_dropped():
     assert resolve([_cite(1, PARTS.source, 3, 3)], BRIEFED, REPO_URL) == ([], 1)
 

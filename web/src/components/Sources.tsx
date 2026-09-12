@@ -33,7 +33,25 @@ const EXTERNAL = (
   </svg>
 );
 
-/** The excerpt as an editor panel: line numbers from `start_line`, a fade when lines overflow. */
+/**
+ * The signature row and the code lines of an excerpt.
+ *
+ * Only a function or method chunk carries a signature row, the excerpt's first line: it is
+ * metadata, never a line of the file, so it is unnumbered, and it is dropped when the code
+ * repeats it (`def f(x) -> T` then `    def f(x) -> T:`). Code always starts at `start_line`.
+ */
+export function panelLines(source: Source): { signature: string | null; code: string[] } {
+  const lines = source.excerpt.split("\n");
+  const signed = source.kind === "function" || source.kind === "method";
+  const code = signed ? lines.slice(1) : lines;
+  if (!signed) return { signature: null, code };
+  const bare = (line: string) => line.trim().replace(/[:{]$/, "");
+  const first = code.find((line) => line.trim() !== "");
+  const repeated = first !== undefined && bare(first) === bare(lines[0]);
+  return { signature: repeated ? null : lines[0], code };
+}
+
+/** The excerpt as an editor panel: code numbered from `start_line`, a fade when lines overflow. */
 function CodePanel({ source }: { source: Source }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [overflows, setOverflows] = useState(false);
@@ -41,18 +59,23 @@ function CodePanel({ source }: { source: Source }) {
     const element = scroller.current;
     if (element) setOverflows(element.scrollWidth > element.clientWidth + 1);
   }, [source.excerpt]);
-  // The excerpt opens with the chunk's signature row. Drop it when the code below repeats it
-  // (`def f(x) -> T` then `    def f(x) -> T:`), which also puts the line numbers back in step.
-  const [signature, ...rest] = source.excerpt.split("\n");
-  const bare = (line: string) => line.trim().replace(/[:{]$/, "");
-  const firstCode = rest.find((line) => line.trim() !== "");
-  const code = firstCode !== undefined && bare(firstCode) === bare(signature) ? rest : [signature, ...rest];
+  const { signature, code } = panelLines(source);
   return (
     <div
       className={`relative border-l-[3px] bg-slate-900 ${source.tier ? TIER_BORDER[source.tier] : "border-l-slate-600"}`}
     >
       <div ref={scroller} className="max-h-72 overflow-auto">
         <div className="min-w-max py-3 font-mono text-[12.5px] leading-6 text-slate-100">
+          {signature !== null && (
+            <div className="flex text-slate-400">
+              {/* Metadata, not a line of the file: the gutter stays empty. */}
+              <span
+                aria-hidden="true"
+                className="sticky left-0 w-11 shrink-0 bg-slate-900 pr-3 select-none"
+              />
+              <span className="pr-8 whitespace-pre">{signature}</span>
+            </div>
+          )}
           {code.map((line, i) => (
             <div key={i} className="flex">
               <span className="sticky left-0 w-11 shrink-0 bg-slate-900 pr-3 text-right text-slate-500 tabular-nums select-none">
