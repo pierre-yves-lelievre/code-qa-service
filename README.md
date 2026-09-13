@@ -526,7 +526,7 @@ One run, start to finish, with real providers: a fresh database, `pallets/markup
 
 **12. Mobile.** The sidebar stacks above the chat.
 
-![Mobile](docs/screenshots/mobile-repo.png)
+<img src="docs/screenshots/mobile-repo.png" alt="Mobile" width="320">
 
 ---
 
