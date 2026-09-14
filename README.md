@@ -471,8 +471,7 @@ Visually: one accent, one colour per retrieval tier, a serif only at display siz
 
 The walkthrough below shows every state; the two-minute recording shows the same flow live.
 
-<!-- TODO(author): link to the two-minute recording -->
-**Video:** search → index → ask → follow-up → not-found → MCP: <link>
+**Video:** search → index → ask → follow-up → not-found → MCP: [watch the two-minute demo](https://youtu.be/oXqFyc3vYRc)
 
 ---
 
